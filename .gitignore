@@ -1,0 +1,14 @@
+# Configuración con contraseñas: nunca a GitHub
+app/config.php
+
+# Exportes del banco o de la base
+*.xls
+*.xlsx
+*.csv
+*.sql.gz
+sql/*dump*.sql
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

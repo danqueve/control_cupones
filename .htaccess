@@ -1,0 +1,23 @@
+# Control de Cupones — control.imperiocomercial.com.ar
+
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Siempre por HTTPS
+  RewriteCond %{HTTPS} off
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+  # Carpetas internas: nunca accesibles desde la web
+  RewriteRule ^(app|bin|sql|apps-script)(/|$) - [F,L]
+  RewriteRule (^|/)\.git(/|$) - [F,L]
+  RewriteRule \.(md|sql|log|example\.php)$ - [F,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set X-Frame-Options "DENY"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "same-origin"
+</IfModule>
