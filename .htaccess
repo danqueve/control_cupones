@@ -6,8 +6,9 @@ DirectoryIndex index.php
 <IfModule mod_rewrite.c>
   RewriteEngine On
 
-  # Siempre por HTTPS
+  # Siempre por HTTPS (salvo en la PC local: XAMPP / WAMP)
   RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1|192\.168\.|10\.)
   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
   # Carpetas internas: nunca accesibles desde la web
