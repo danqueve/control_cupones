@@ -110,7 +110,7 @@ final class Planilla
     {
         $url = (string)config('planilla.url');
         $token = (string)config('planilla.token');
-        if ($url === '' || str_contains($url, 'XXXX') || $token === '') {
+        if ($url === '' || str_contains($url, 'XXXX') || $token === '' || str_starts_with($token, 'CAMBIAR')) {
             throw new RuntimeException('Falta configurar la conexión con la planilla (app/config.php → planilla).');
         }
 

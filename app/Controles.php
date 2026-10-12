@@ -18,8 +18,11 @@ final class Controles
         try {
             Planilla::sincronizar();
         } catch (Throwable $e) {
-            $aviso = 'No se pudo leer la planilla en este momento; se usaron los cupones de la última lectura ('
-                . fecha_ar(ajuste('ultima_sincronizacion')) . '). Detalle: ' . $e->getMessage();
+            $ultima = ajuste('ultima_sincronizacion');
+            $aviso = 'No se pudo leer la planilla en este momento; '
+                . ($ultima ? 'se usaron los cupones de la última lectura (' . fecha_ar($ultima) . ').'
+                           : 'todavía no hay cupones cargados, así que no se pudo comparar.')
+                . ' Detalle: ' . $e->getMessage();
         }
 
         $pdo = db();
