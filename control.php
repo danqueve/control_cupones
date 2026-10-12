@@ -42,91 +42,154 @@ if ($items && $f !== 'sin_cupon') {
 }
 
 $cuadro = function (string $estado, string $rotulo, int $cantidad, string $filtro) use ($montos, $f, $id) {
-    $clase = estado_info($estado)['clase'];
+    $info = estado_info($estado);
     $elegido = $f === $filtro ? ' elegido' : '';
-    return '<a class="cuadro c-' . $clase . $elegido . '" href="control.php?id=' . $id . '&f=' . $filtro . '">'
-        . '<div class="cifra num">' . $cantidad . '</div><div class="rotulo">' . h($rotulo) . '</div>'
-        . '<div class="monto num">' . dinero($montos[$estado] ?? 0) . '</div></a>';
+    return '<a class="cuadro c-' . $info['clase'] . $elegido . '" href="control.php?id=' . $id . '&amp;f=' . $filtro . '#lista"'
+        . ($f === $filtro ? ' aria-current="true"' : '') . '>'
+        . '<span class="cuadro-titulo">' . icono($info['icono'], '') . h($rotulo) . '</span>'
+        . '<span class="cifra">' . $cantidad . '</span>'
+        . '<span class="monto">' . dinero($montos[$estado] ?? 0) . '</span></a>';
 };
 
-encabezado('Control #' . $id, 'historial');
+$cuentas = ['problemas' => (int)$ctrl['no_figuran'] + (int)$ctrl['revisar'], 'no' => (int)$ctrl['no_figuran'], 'revisar' => (int)$ctrl['revisar'],
+    'ok' => (int)$ctrl['ok'], 'espera' => (int)$ctrl['espera'], 'sin_cupon' => (int)$ctrl['sin_cupon'], 'todos' => null];
+$filtros['todos'] = 'Todos';
+
+encabezado('Control #' . $id, 'control');
 ?>
-<div class="titulo-pagina fila entre">
+<header class="cabecera">
   <div>
-    <h1>Control #<?= $id ?></h1>
-    <p class="chico">Movimientos del banco del <strong><?= h(fecha_ar($ctrl['desde'])) ?></strong> al <strong><?= h(fecha_ar($ctrl['hasta'])) ?></strong>
-      · subido el <?= h(fecha_ar($ctrl['creado_en'])) ?> por <?= h($ctrl['usuario']) ?>
-      · <?= (int)$ctrl['mov_archivo'] ?> transferencias (<?= dinero($ctrl['total_archivo']) ?>), <?= (int)$ctrl['mov_nuevos'] ?> nuevas</p>
+    <nav class="ruta" aria-label="Ruta"><a href="historial.php">Historial</a><span aria-hidden="true">/</span><span>Control <span class="mono">#<?= $id ?></span></span></nav>
+    <h1>Movimientos del <span class="mono" style="font-weight: 600; letter-spacing: -.03em"><?= h(fecha_corta($ctrl['desde'])) ?> → <?= h(fecha_corta($ctrl['hasta'])) ?></span></h1>
+    <p style="font-size: 14px">Subido el <?= h(dia_corto($ctrl['creado_en'])) ?>, <?= h(date('H:i', strtotime($ctrl['creado_en']))) ?> por <?= h($ctrl['usuario']) ?>
+      · <span class="mono"><?= (int)$ctrl['mov_archivo'] ?></span> transferencias por <span class="mono"><?= dinero($ctrl['total_archivo']) ?></span>
+      · <span class="mono"><?= (int)$ctrl['mov_nuevos'] ?></span> nuevas</p>
   </div>
-  <a class="boton boton-sec boton-chico" href="index.php">Subir otro resumen</a>
-</div>
+  <a class="boton boton-sec" href="index.php">Subir otro resumen</a>
+</header>
 
-<div class="cuadros">
-  <?= $cuadro('ok', 'Acreditados', (int)$ctrl['ok'], 'ok') ?>
-  <?= $cuadro('revisar', 'A revisar', (int)$ctrl['revisar'], 'revisar') ?>
-  <?= $cuadro('no', 'No figuran en el banco', (int)$ctrl['no_figuran'], 'no') ?>
-  <?= $cuadro('sin_cupon', 'Plata sin cupón', (int)$ctrl['sin_cupon'], 'sin_cupon') ?>
-</div>
-
-<nav class="filtros" aria-label="Filtrar">
-  <?php foreach ($filtros as $clave => $texto): ?>
-    <a class="<?= $f === $clave ? 'activo' : '' ?>" href="control.php?id=<?= $id ?>&f=<?= $clave ?>"><?= h($texto) ?></a>
-  <?php endforeach; ?>
-</nav>
-
-<?php if ((int)$ctrl['espera'] > 0 && $f === 'problemas'): ?>
-  <p class="chico">⏳ <?= (int)$ctrl['espera'] ?> <?= (int)$ctrl['espera'] === 1 ? 'cupón quedó' : 'cupones quedaron' ?> <a href="control.php?id=<?= $id ?>&f=espera">en espera</a> (son de los últimos días o de fechas sin resumen): se vuelven a controlar con el próximo resumen.</p>
-<?php endif; ?>
-
-<div class="lista">
-  <?php if (!$items): ?>
-    <div class="tarjeta vacio"><?= $f === 'problemas' ? '🎉 No hay nada para revisar en este control.' : 'No hay nada en esta lista.' ?></div>
+<section class="tarjeta" style="gap: 18px">
+  <?= barra_estados(['ok' => (int)$ctrl['ok'], 'revisar' => (int)$ctrl['revisar'], 'no' => (int)$ctrl['no_figuran'], 'espera' => (int)$ctrl['espera']], 'gruesa') ?>
+  <div class="cuadros">
+    <?= $cuadro('ok', 'Acreditados', (int)$ctrl['ok'], 'ok') ?>
+    <?= $cuadro('revisar', 'A revisar', (int)$ctrl['revisar'], 'revisar') ?>
+    <?= $cuadro('no', 'No figuran en el banco', (int)$ctrl['no_figuran'], 'no') ?>
+    <?= $cuadro('sin_cupon', 'Plata sin cupón', (int)$ctrl['sin_cupon'], 'sin_cupon') ?>
+  </div>
+  <?php if ((int)$ctrl['espera'] > 0): ?>
+    <p class="nota-espera"><?= icono('reloj') ?>
+      <span><span class="mono"><?= (int)$ctrl['espera'] ?></span> <?= (int)$ctrl['espera'] === 1 ? 'cupón quedó' : 'cupones quedaron' ?>
+        <a href="control.php?id=<?= $id ?>&amp;f=espera#lista">en espera</a>: son de los últimos días o de fechas sin resumen, y se vuelven a controlar con el próximo resumen.</span></p>
   <?php endif; ?>
+</section>
 
-  <?php foreach ($items as $it): $info = estado_info($it['estado']); $dni = $it['dni'] ? (int)$it['dni'] : null; ?>
-    <?php if ($it['tipo'] === 'sin_cupon'): ?>
-      <article class="item b-sincupon">
-        <div>
-          <div class="item-nombre"><?= $it['nombre_banco'] ? h($it['nombre_banco']) : '<span class="chico">Nombre no informado</span>' ?></div>
-          <?= cliente_sas($dni, $sas) ?>
-        </div>
-        <div class="item-monto num"><?= dinero($it['monto']) ?></div>
-        <div class="item-datos">
-          <span><?= etiqueta('sin_cupon') ?></span>
-          <span>📅 <?= h(fecha_ar($it['fecha_banco'])) ?></span>
-          <span>CUIL <?= h(formato_cuit($it['cuit_banco'])) ?></span>
-          <span><?= link_persona($dni, 'Ver todo de esta persona') ?></span>
-          <?php if ($it['detalle']): ?><span><?= h($it['detalle']) ?></span><?php endif; ?>
-        </div>
-      </article>
-    <?php else: ?>
-      <article class="item b-<?= h($info['clase']) ?>">
-        <div>
-          <div class="item-nombre"><?= h($it['titular'] ?: 'Titular no leído') ?></div>
-          <?= cliente_sas($dni, $sas) ?>
-        </div>
-        <div class="item-monto num"><?= dinero($it['monto']) ?></div>
-        <div class="item-datos">
-          <span><?= etiqueta($it['estado']) ?></span>
-          <span>📍 <?= h($it['zona']) ?></span>
-          <span>👤 <?= h($it['cobrador']) ?></span>
-          <span>📅 <?= h(fecha_ar($it['fecha_cupon'])) ?></span>
-          <?php if ($it['billetera']): ?><span>🏦 <?= h($it['billetera']) ?></span><?php endif; ?>
-          <?php if ($it['nro_operacion']): ?><span>N° <?= h($it['nro_operacion']) ?></span><?php endif; ?>
-        </div>
-        <?php if ($it['fecha_banco']): ?>
-          <div class="item-banco">En el banco: <strong><?= h(fecha_ar($it['fecha_banco'])) ?></strong>
-            <?= $it['nombre_banco'] ? ' · ' . h($it['nombre_banco']) : '' ?>
-            <?= $it['cuit_banco'] ? ' · CUIL ' . h(formato_cuit($it['cuit_banco'])) : '' ?>
-            <?= $dni ? ' · ' . link_persona($dni, 'ver persona') : '' ?>
-            <?= $it['detalle'] ? '<br><span class="chico">' . h($it['detalle']) . '</span>' : '' ?>
-          </div>
-        <?php elseif ($it['detalle']): ?>
-          <div class="item-banco chico"><?= h($it['detalle']) ?>
-            <?= isset($pendAbiertos[$it['cupon_id']]) ? ' · <a href="pendientes.php">En seguimiento</a>' : '' ?></div>
-        <?php endif; ?>
-      </article>
+<section class="tarjeta tarjeta-plana" id="lista">
+  <div class="lista-cabecera">
+    <nav class="chips" aria-label="Filtrar">
+      <?php foreach ($filtros as $clave => $texto): ?>
+        <a class="chip<?= $f === $clave ? ' activo' : '' ?>" href="control.php?id=<?= $id ?>&amp;f=<?= $clave ?>#lista"<?= $f === $clave ? ' aria-current="true"' : '' ?>>
+          <?= h($texto) ?><?php if ($cuentas[$clave] !== null): ?> <span class="mono"><?= $cuentas[$clave] ?></span><?php endif; ?>
+        </a>
+      <?php endforeach; ?>
+    </nav>
+    <?php if ($items): ?>
+      <label class="filtro-texto">
+        <span class="oculto">Filtrar la lista</span>
+        <?= icono('buscar') ?>
+        <input type="search" id="filtro-lista" placeholder="Nombre, zona o cobrador" autocomplete="off">
+      </label>
     <?php endif; ?>
-  <?php endforeach; ?>
-</div>
+  </div>
+
+  <?php if (!$items): ?>
+    <div class="vacio"><?= $f === 'problemas' ? icono('check', '') . '<br><strong>No hay nada para revisar en este control.</strong>' : 'No hay nada en esta lista.' ?></div>
+  <?php else: ?>
+    <div class="tabla-caja">
+      <table class="tabla tabla-tarjetas" style="min-width: 960px">
+        <thead>
+          <tr>
+            <th scope="col">Estado</th>
+            <th scope="col">Titular del cupón</th>
+            <th scope="col">Zona · cobrador</th>
+            <th scope="col">Cupón</th>
+            <th scope="col">En el banco</th>
+            <th scope="col" class="der">Monto</th>
+            <th scope="col"><span class="oculto">Acciones</span></th>
+          </tr>
+        </thead>
+        <tbody id="filas">
+          <?php foreach ($items as $it): $dni = $it['dni'] ? (int)$it['dni'] : null; ?>
+            <?php if ($it['tipo'] === 'sin_cupon'): ?>
+              <tr>
+                <td><?= etiqueta('sin_cupon') ?></td>
+                <td>
+                  <?= link_persona($dni, $it['nombre_banco'] ?: 'Nombre no informado') ?>
+                  <?= cliente_sas($dni, $sas) ?>
+                </td>
+                <td class="sub ocultar-cel">—</td>
+                <td class="sub">No mandó cupón</td>
+                <td>
+                  <div><span class="mono" style="font-size: 13px"><?= h(fecha_ar($it['fecha_banco'])) ?></span><?= $it['cuit_banco'] ? ' · <span class="mono" style="font-size: 13px">CUIL ' . h(formato_cuit($it['cuit_banco'])) . '</span>' : '' ?></div>
+                  <?php if ($it['detalle']): ?><div class="sub"><?= h($it['detalle']) ?></div><?php endif; ?>
+                </td>
+                <td class="monto-fila"><?= dinero($it['monto']) ?></td>
+                <td class="acciones"><?= $dni ? '<a href="buscar.php?q=' . $dni . '">Ver persona →</a>' : '' ?></td>
+              </tr>
+            <?php else: ?>
+              <tr>
+                <td><?= etiqueta($it['estado'], $it['estado'] === 'no' ? 'No figura' : null) ?></td>
+                <td>
+                  <?= link_persona($dni, $it['titular'] ?: 'Titular no leído') ?>
+                  <?= cliente_sas($dni, $sas) ?>
+                </td>
+                <td><div><?= h($it['zona']) ?></div><div class="sub"><?= h($it['cobrador']) ?></div></td>
+                <td>
+                  <div class="mono" style="font-size: 13px"><?= h(fecha_ar($it['fecha_cupon'])) ?></div>
+                  <?php if ($it['billetera']): ?><div class="sub"><?= h($it['billetera']) ?></div><?php endif; ?>
+                  <?php if ($it['nro_operacion']): ?><div class="mono sub" style="font-size: 12px">N° <?= h($it['nro_operacion']) ?></div><?php endif; ?>
+                </td>
+                <td style="max-width: 280px">
+                  <?php if ($it['fecha_banco']): ?>
+                    <div><span class="mono" style="font-size: 13px"><?= h(fecha_ar($it['fecha_banco'])) ?></span><?= $it['nombre_banco'] ? ' · ' . h($it['nombre_banco']) : '' ?></div>
+                    <?php if ($it['cuit_banco']): ?><div class="mono sub" style="font-size: 12px">CUIL <?= h(formato_cuit($it['cuit_banco'])) ?></div><?php endif; ?>
+                  <?php elseif ($it['estado'] === 'no'): ?>
+                    <div class="mono rojo" style="font-size: 13px">Sin transferencia</div>
+                  <?php endif; ?>
+                  <?php if ($it['detalle']): ?><div class="sub" style="text-wrap: pretty"><?= h($it['detalle']) ?></div><?php endif; ?>
+                </td>
+                <td class="monto-fila"><?= dinero($it['monto']) ?></td>
+                <td class="acciones">
+                  <?php if (isset($pendAbiertos[$it['cupon_id']])): ?><a href="pendientes.php">En seguimiento →</a>
+                  <?php elseif ($dni): ?><a href="buscar.php?q=<?= $dni ?>">Ver persona →</a><?php endif; ?>
+                </td>
+              </tr>
+            <?php endif; ?>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <div class="lista-pie" id="contador" aria-live="polite">Mostrando <span class="mono"><?= count($items) ?></span> de <span class="mono"><?= count($items) ?></span></div>
+  <?php endif; ?>
+</section>
+
+<script>
+(function () {
+  var campo = document.getElementById('filtro-lista');
+  if (!campo) return;
+  var filas = Array.prototype.slice.call(document.querySelectorAll('#filas tr'));
+  var contador = document.getElementById('contador');
+  var sinTildes = function (t) { return t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); };
+  var textos = filas.map(function (f) { return sinTildes(f.textContent); });
+  campo.addEventListener('input', function () {
+    var q = sinTildes(campo.value.trim());
+    var visibles = 0;
+    filas.forEach(function (f, i) {
+      var ok = !q || textos[i].indexOf(q) !== -1;
+      f.hidden = !ok;
+      if (ok) visibles++;
+    });
+    contador.innerHTML = 'Mostrando <span class="mono">' + visibles + '</span> de <span class="mono">' + filas.length + '</span>';
+  });
+})();
+</script>
 <?php pie();

@@ -120,7 +120,7 @@ final class Busqueda
 
     private static function traerCupones(string $where, array $params): array
     {
-        $st = db()->prepare("SELECT c.*, m.fecha AS mov_fecha, m.dni AS mov_dni, m.cuit AS mov_cuit, m.nombre AS mov_nombre,
+        $st = db()->prepare("SELECT c.*, m.fecha AS mov_fecha, m.monto AS mov_monto, m.dni AS mov_dni, m.cuit AS mov_cuit, m.nombre AS mov_nombre,
                                     p.estado AS pend_estado, p.nota AS pend_nota
                              FROM cupones c
                              LEFT JOIN movimientos m ON m.id = c.movimiento_id

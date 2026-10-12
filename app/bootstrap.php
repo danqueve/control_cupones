@@ -199,13 +199,13 @@ function responder_json(array $datos, int $codigo = 200): void
 function estado_info(string $estado): array
 {
     $map = [
-        'ok'        => ['Acreditado', 'ok', '✅'],
-        'revisar'   => ['A revisar', 'revisar', '🟡'],
-        'no'        => ['No figura en el banco', 'no', '❌'],
-        'espera'    => ['En espera', 'espera', '⏳'],
-        'omitido'   => ['No se controla', 'omitido', '⚪'],
-        'sin_cupon' => ['Sin cupón', 'sincupon', '💵'],
+        'ok'        => ['Acreditado', 'ok', 'check'],
+        'revisar'   => ['A revisar', 'revisar', 'alerta'],
+        'no'        => ['No figura en el banco', 'no', 'cruz'],
+        'espera'    => ['En espera', 'espera', 'reloj'],
+        'omitido'   => ['No se controla', 'omitido', 'menos'],
+        'sin_cupon' => ['Sin cupón', 'sincupon', 'billete'],
     ];
-    [$texto, $clase, $icono] = $map[$estado] ?? ['Sin controlar', 'omitido', '·'];
+    [$texto, $clase, $icono] = $map[$estado] ?? ['Sin controlar', 'omitido', 'menos'];
     return ['texto' => $texto, 'clase' => $clase, 'icono' => $icono];
 }
