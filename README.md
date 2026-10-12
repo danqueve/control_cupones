@@ -79,16 +79,16 @@ mysql -e "SHOW TABLES FROM c2881399_credit LIKE '%client%'"
 mysql -e "SHOW COLUMNS FROM c2881399_credit.ic_clientes"
 ```
 
-Crear el usuario con permiso **únicamente de SELECT** sobre esa tabla:
+Crear el usuario con permiso **únicamente de SELECT** y solo sobre las 3 columnas que usa
+(no ve teléfonos, direcciones ni tokens):
 
 ```sql
 CREATE USER 'c2881399_sasro'@'localhost' IDENTIFIED BY 'OTRA_CLAVE_LARGA';
-GRANT SELECT ON c2881399_credit.ic_clientes TO 'c2881399_sasro'@'localhost';
+GRANT SELECT (dni, nombres, apellidos) ON c2881399_credit.ic_clientes TO 'c2881399_sasro'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-Si las columnas no se llaman `dni`, `nombre` y `apellido`, ajustar `sas.sql` en `app/config.php`
-(tiene que devolver una columna `dni` y una `nombre`).
+La consulta de `sas.sql` en `app/config.php` tiene que devolver una columna `dni` y una `nombre`.
 
 ### 5. Exportador de la planilla (Google Apps Script)
 

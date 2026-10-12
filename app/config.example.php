@@ -31,7 +31,9 @@ return [
         'pass'   => 'CAMBIAR',
         // La consulta debe devolver las columnas dni y nombre.
         // {dnis} se reemplaza por la lista de DNI a buscar.
-        'sql'    => "SELECT dni, CONCAT(apellido, ', ', nombre) AS nombre FROM ic_clientes WHERE dni IN ({dnis})",
+        // (Se quitan puntos y espacios del DNI por si en SAS está cargado como "33.974.259")
+        'sql'    => "SELECT REPLACE(REPLACE(dni, '.', ''), ' ', '') AS dni, CONCAT(apellidos, ', ', nombres) AS nombre"
+                  . " FROM ic_clientes WHERE REPLACE(REPLACE(dni, '.', ''), ' ', '') IN ({dnis})",
         // Link opcional a la ficha del cliente en SAS ({dni} se reemplaza). Dejar '' si no se usa.
         'link'   => '',
     ],
