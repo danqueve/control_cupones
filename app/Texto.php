@@ -83,13 +83,23 @@ final class Texto
     /** "ING TRANSF:YAMILA BELEN DELGADILL-27432251360" → "YAMILA BELEN DELGADILL" */
     public static function nombreDelConcepto(?string $concepto): string
     {
-        if (!preg_match('/TRANSF:\s*([\p{L} ,.\'´]+?)\s*-\s*\d{11}/iu', (string)$concepto, $m)) {
-            return '';
+        $c = (string)$concepto;
+        // "ING TRANSF:YAMILA BELEN DELGADILL-27432251360"
+        if (preg_match('/TRANSF:\s*([\p{L} ,.\'´]+?)\s*-\s*\d{11}/iu', $c, $m)) {
+            return trim($m[1]);
         }
-        return preg_match('/\d/', $m[1]) ? '' : trim($m[1]);
+        // "TRANSF FERNANDO 20339742597 VAR" o "TRANSF CORDOBA/F 20339742597 VAR"
+        if (preg_match('/TRANSF\s+(\p{L}[\p{L} .\/\'´]*?)\s+' . self::PREFIJOS_CUIT . '\d{9}(?!\d)/iu', $c, $m)) {
+            $nombre = trim(preg_replace('/\s+/', ' ', str_replace('/', ' ', $m[1])));
+            return self::tokens($nombre) ? $nombre : '';
+        }
+        return '';
     }
 
-    /** Montos como "64.000,00", "45000.50", 45000 o "45.000". */
+    /**
+     * Montos en cualquier formato habitual:
+     * "64.000,00" (Argentina), "64,000.00" (EE.UU.), "64000.50", "64000,50", "64.000", "64,000" o 64000.
+     */
     public static function monto($v): float
     {
         if (is_int($v) || is_float($v)) {
@@ -99,9 +109,16 @@ final class Texto
         if ($s === '' || $s === '-') {
             return 0.0;
         }
-        if (str_contains($s, ',')) {
-            $s = str_replace(['.', ','], ['', '.'], $s);
-        } elseif (preg_match('/^\d{1,3}(\.\d{3})+$/', $s)) {
+        $coma = strrpos($s, ',');
+        $punto = strrpos($s, '.');
+        if ($coma !== false && $punto !== false) {
+            // El separador que aparece último es el de los decimales
+            $s = $coma > $punto ? str_replace(['.', ','], ['', '.'], $s) : str_replace(',', '', $s);
+        } elseif ($coma !== false) {
+            // Solo comas: "64,000" / "1,250,000" son miles; "64000,50" es decimal
+            $s = preg_match('/^-?\d{1,3}(,\d{3})+$/', $s) ? str_replace(',', '', $s) : str_replace(',', '.', $s);
+        } elseif ($punto !== false && preg_match('/^-?\d{1,3}(\.\d{3})+$/', $s)) {
+            // Solo puntos de miles: "64.000"
             $s = str_replace('.', '', $s);
         }
         return (float)$s;

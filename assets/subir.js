@@ -25,7 +25,9 @@
       lector.onerror = function () { reject(new Error('No se pudo leer el archivo.')); };
       lector.onload = function () {
         try {
-          var libro = XLSX.read(new Uint8Array(lector.result), { type: 'array' });
+          // raw: true → en CSV/TXT deja montos y fechas como texto ("38.000,00", "07/09/2026")
+          // para que los interprete el servidor en formato argentino. En Excel no cambia nada.
+          var libro = XLSX.read(new Uint8Array(lector.result), { type: 'array', raw: true });
           var hoja = libro.Sheets[libro.SheetNames[0]];
           var filas = XLSX.utils.sheet_to_json(hoja, { header: 1, raw: true, defval: '' });
           // Quitar filas vacías del final
