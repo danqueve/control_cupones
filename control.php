@@ -55,6 +55,31 @@ $cuentas = ['problemas' => (int)$ctrl['no_figuran'] + (int)$ctrl['revisar'], 'no
     'ok' => (int)$ctrl['ok'], 'espera' => (int)$ctrl['espera'], 'sin_cupon' => (int)$ctrl['sin_cupon'], 'todos' => null];
 $filtros['todos'] = 'Todos';
 
+// Datos para "Descargar Excel": todo el control (no solo el filtro elegido), con una columna de estado para filtrar en Excel
+$todosCupones = Controles::items($id, 'cupon');
+$todosSinCupon = Controles::items($id, 'sin_cupon');
+$sasTodos = Sas::nombres(array_merge(array_column($todosCupones, 'dni'), array_column($todosSinCupon, 'dni')));
+$idsCupones = array_filter(array_column($todosCupones, 'cupon_id'));
+$enSeguimiento = [];
+if ($idsCupones) {
+    $enSeguimiento = array_flip(db()->query("SELECT cupon_id FROM pendientes WHERE estado = 'pendiente' AND cupon_id IN (" . implode(',', array_map('intval', $idsCupones)) . ')')->fetchAll(PDO::FETCH_COLUMN));
+}
+$hojaCupones = ['nombre' => 'Cupones', 'columnas' => [
+    ['Estado', 't'], ['Titular del cupón', 't'], ['DNI', 'n'], ['Cliente SAS', 't'], ['Zona', 't'], ['Cobrador', 't'],
+    ['Fecha cupón', 'f'], ['Billetera', 't'], ['N° operación', 't'], ['Monto', 'm'],
+    ['Fecha banco', 'f'], ['Nombre en el banco', 't'], ['CUIL banco', 't'], ['Detalle', 't'], ['En seguimiento', 't'],
+], 'filas' => array_map(fn($i) => [
+    $i['estado'] === 'no' ? 'No figura en el banco' : estado_info($i['estado'])['texto'],
+    $i['titular'], $i['dni'], $i['dni'] ? ($sasTodos[(int)$i['dni']] ?? '') : '', $i['zona'], $i['cobrador'],
+    $i['fecha_cupon'], $i['billetera'], $i['nro_operacion'], $i['monto'],
+    $i['fecha_banco'], $i['nombre_banco'], $i['cuit_banco'], $i['detalle'], isset($enSeguimiento[$i['cupon_id']]) ? 'Sí' : '',
+], $todosCupones)];
+$hojaSinCupon = ['nombre' => 'Plata sin cupón', 'columnas' => [
+    ['Fecha banco', 'f'], ['Nombre en el banco', 't'], ['CUIL', 't'], ['DNI', 'n'], ['Cliente SAS', 't'], ['Monto', 'm'], ['Detalle', 't'],
+], 'filas' => array_map(fn($i) => [
+    $i['fecha_banco'], $i['nombre_banco'], $i['cuit_banco'], $i['dni'], $i['dni'] ? ($sasTodos[(int)$i['dni']] ?? '') : '', $i['monto'], $i['detalle'],
+], $todosSinCupon)];
+
 encabezado('Control #' . $id, 'control');
 ?>
 <header class="cabecera">
@@ -65,7 +90,10 @@ encabezado('Control #' . $id, 'control');
       · <span class="mono"><?= (int)$ctrl['mov_archivo'] ?></span> transferencias por <span class="mono"><?= dinero($ctrl['total_archivo']) ?></span>
       · <span class="mono"><?= (int)$ctrl['mov_nuevos'] ?></span> nuevas</p>
   </div>
-  <a class="boton boton-sec" href="index.php">Subir otro resumen</a>
+  <div class="fila" style="gap: 10px; flex-wrap: wrap; flex-direction: row; align-items: center">
+    <?php boton_excel('control-' . $id . '-' . $ctrl['desde'] . '-a-' . $ctrl['hasta'], [$hojaCupones, $hojaSinCupon]); ?>
+    <a class="boton boton-sec" href="index.php">Subir otro resumen</a>
+  </div>
 </header>
 
 <section class="tarjeta" style="gap: 18px">

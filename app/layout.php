@@ -37,6 +37,7 @@ function icono(string $nombre, string $clase = 'ico'): string
         'copiar'     => '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
         'externo'    => '<path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
         'actualizar' => '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/>',
+        'descargar'  => '<path d="M12 4v11m0 0-4-4m4 4 4-4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
         'salir'      => '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/>',
     ];
     return '<svg class="' . h($clase) . '" viewBox="0 0 24 24" aria-hidden="true">' . ($trazos[$nombre] ?? '') . '</svg>';
@@ -256,4 +257,26 @@ function link_persona(?int $dni, ?string $texto = null, string $clase = 'titular
         return '<span class="' . h($clase) . '">' . h($texto ?? '') . '</span>';
     }
     return '<a class="' . h($clase) . '" href="buscar.php?q=' . $dni . '">' . h($texto ?? ('DNI ' . formato_dni($dni))) . '</a>';
+}
+
+/**
+ * Botón "Descargar Excel". El archivo .xlsx se arma en el navegador (SheetJS) con los datos que se
+ * dejan en la página, así no hace falta ninguna librería extra en el servidor.
+ *
+ * @param string $archivo nombre del archivo sin extensión
+ * @param array  $hojas   [['nombre' => 'Cupones', 'columnas' => [['Fecha', 'f'], ['Monto', 'm'], ['Titular', 't']], 'filas' => [[...], ...]]]
+ *                        tipos de columna: t = texto · f = fecha (AAAA-MM-DD) · m = importe · n = número entero
+ */
+function boton_excel(string $archivo, array $hojas, string $texto = 'Descargar Excel'): void
+{
+    static $cargado = false;
+    $datos = ['archivo' => $archivo, 'hojas' => $hojas];
+    ?>
+    <button type="button" class="boton boton-sec boton-chico" data-excel='<?= h(json_encode($datos, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR)) ?>'>
+      <?= icono('descargar') ?><?= h($texto) ?>
+    </button>
+    <?php if (!$cargado): $cargado = true; ?>
+      <script src="assets/vendor/xlsx.full.min.js"></script>
+      <script src="assets/exportar.js?v=2"></script>
+    <?php endif;
 }

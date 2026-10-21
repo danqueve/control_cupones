@@ -68,6 +68,19 @@ $url = function (array $cambios) use ($verResueltos, $agrupar): string {
 };
 $accion = $url([]);
 
+// Datos para "Descargar Excel": la lista que se está viendo (pendientes o resueltos), en una sola hoja ordenable por zona o cobrador
+$sasPend = Sas::nombres(array_column($lista, 'dni'));
+$hojaPend = ['nombre' => $verResueltos ? 'Resueltos' : 'Pendientes', 'columnas' => [
+    ['Fecha cupón', 'f'], ['Días sin acreditar', 'n'], ['Zona', 't'], ['Cobrador', 't'], ['Titular del cupón', 't'], ['DNI', 'n'],
+    ['Cliente SAS', 't'], ['Monto', 'm'], ['Billetera', 't'], ['N° operación', 't'], ['Detectado', 'f'],
+    ...($verResueltos ? [['Resuelto', 'f'], ['Resuelto por', 't'], ['Nota', 't']] : []),
+], 'filas' => array_map(fn($p) => [
+    $p['fecha_cupon'], $p['fecha_cupon'] ? max(0, (int)floor((time() - strtotime($p['fecha_cupon'])) / 86400)) : '',
+    $p['zona'], $p['cobrador'], $p['titular'], $p['dni'], $p['dni'] ? ($sasPend[(int)$p['dni']] ?? '') : '',
+    $p['monto'], $p['billetera'], $p['nro_operacion'], $p['detectado_en'],
+    ...($verResueltos ? [$p['resuelto_en'], $p['resuelto_por'], $p['nota']] : []),
+], $lista)];
+
 encabezado('Pendientes', 'pendientes');
 ?>
 <header class="cabecera">
@@ -75,6 +88,7 @@ encabezado('Pendientes', 'pendientes');
     <h1>Pendientes de seguir</h1>
     <p>Cupones que llegaron por WhatsApp pero la plata no figura en el banco. Si aparece en un próximo resumen se resuelven solos; si no, consultalo con el cobrador y cerralo con el motivo.</p>
   </div>
+  <?php if ($lista) { boton_excel('pendientes-' . ($verResueltos ? 'resueltos-' : '') . date('Y-m-d'), [$hojaPend]); } ?>
 </header>
 
 <?php if (!$verResueltos && $lista): ?>

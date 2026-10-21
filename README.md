@@ -8,6 +8,7 @@ en la cuenta del **Banco Macro**.
 - **Resultado:** ✅ acreditados · 🟡 a revisar · ❌ no figuran en el banco · 💵 plata que entró sin cupón.
 - **Pendientes:** los cupones que no figuran quedan en seguimiento hasta que aparecen en otro resumen (se resuelven solos) o se resuelven a mano con una nota.
 - **Buscador:** por DNI o CUIL (completo o parcial) o por nombre y apellido de quien pagó.
+- **Excel:** el botón "Descargar Excel" baja el control completo (cupones con su estado + plata sin cupón) o la lista de pendientes. El archivo se arma en el navegador, no necesita nada extra en el servidor.
 - **Historial:** cada control y cada búsqueda quedan guardados.
 - **SAS Imperio (solo lectura):** muestra el nombre del cliente por DNI.
 
@@ -170,4 +171,5 @@ No hace falta: la planilla se lee sola al subir un resumen y al buscar (si pasar
 | `app/Sas.php` | Nombre del cliente en SAS (solo lectura) |
 | `apps-script/Exportador.gs` | Publica la planilla como JSON con token |
 | `sql/schema.sql` | Tablas |
+| `assets/exportar.js` | Arma el .xlsx de "Descargar Excel" en el navegador (SheetJS) |
 | `assets/vendor/xlsx.full.min.js` | SheetJS 0.18.5 (lector de Excel, licencia Apache 2.0) |
