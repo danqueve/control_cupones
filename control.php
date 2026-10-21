@@ -27,7 +27,7 @@ if ($f === 'sin_cupon') {
     $items = Controles::items($id, 'cupon', $f);
 }
 
-$st = db()->prepare("SELECT estado, SUM(monto) FROM control_items WHERE control_id = ? GROUP BY estado");
+$st = db()->prepare("SELECT estado, SUM(monto) FROM control_items WHERE control_id = ? AND (detalle IS NULL OR detalle <> 'Cupón duplicado') GROUP BY estado");
 $st->execute([$id]);
 $montos = $st->fetchAll(PDO::FETCH_KEY_PAIR);
 
