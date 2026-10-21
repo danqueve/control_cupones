@@ -28,6 +28,7 @@ Excel de Macro ──► navegador (lo lee con SheetJS) ──► PHP ──► 
 1. El N° de operación del cupón aparece en el concepto o la referencia del banco, y el monto es igual → ✅
 2. El CUIL del cupón coincide con el del banco y el monto es igual (hasta 5 días de diferencia) → ✅
 3. El nombre del titular coincide con el del banco y el monto es igual (hasta 3 días) → ✅
+   Si el banco informó solo el CUIL (sin nombre), se usa el nombre del cliente en SAS (solo lectura) para comparar.
 4. Solo coinciden el monto y la fecha → 🟡 a revisar
 5. Sin coincidencia → ❌ no figura (pasa a Pendientes). Si el cupón es de los últimos 2 días del resumen, o de una fecha sin resumen cargado → ⏳ en espera.
 

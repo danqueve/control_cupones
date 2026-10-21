@@ -117,6 +117,7 @@ Pasadas en orden; una transferencia se asigna a un solo cupón; en empate gana l
 1. **N° de operación** del cupón aparece en el concepto o en la referencia del banco + mismo monto (±5 días) → ✅ `ok`
 2. **DNI/CUIL** coincide + mismo monto (±5 días) → ✅ `ok`
 3. **Nombre** coincide (prefijos de ≥4 letras, mínimo 2 palabras) + mismo monto (±3 días) → ✅ `ok`
+   Si el banco informó solo el CUIL (sin nombre), se compara con el nombre del cliente en SAS según el DNI (`Sas::nombres`, solo lectura; detalle "Coincide nombre (según SAS) y monto"). Si SAS está apagado o falla, ese paso se omite.
 4. Solo **monto + fecha** (±3 días) → 🟡 `revisar`
 5. Sin coincidencia → ❌ `no` (pasa a Pendientes), o ⏳ `espera` si el cupón es de los últimos 2 días del resumen
    o de una fecha para la que todavía no se subió resumen.

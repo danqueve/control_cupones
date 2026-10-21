@@ -21,12 +21,14 @@ final class Conciliador
     /**
      * @param array $cupones [id => ['fecha' => ?DateTimeImmutable, 'monto', 'titular', 'nro_operacion', 'estado_bot', 'dni']]
      * @param array $movs    [id => ['fecha' => DateTimeImmutable, 'monto', 'nombre', 'dni', 'referencia', 'concepto']]
+     * @param array $nombresSas [dni => nombre del cliente en SAS]. Se usa solo para las transferencias que el banco
+     *                          informa sin nombre (solo con el CUIL), para poder compararlas con el titular del cupón.
      * @return array [
      *   'cupones' => [cuponId => ['estado', 'detalle', 'movimiento_id']],
      *   'movs'    => [movId => cuponId],
      * ]
      */
-    public function conciliar(array $cupones, array $movs): array
+    public function conciliar(array $cupones, array $movs, array $nombresSas = []): array
     {
         $resultado = [];
         $asignado = [];   // movId => cuponId
@@ -58,6 +60,16 @@ final class Conciliador
         $asignar = function ($cid, int $mid, string $estado, string $detalle) use (&$asignado, &$resultado): void {
             $asignado[$mid] = $cid;
             $resultado[$cid] = ['estado' => $estado, 'detalle' => $detalle, 'movimiento_id' => $mid];
+        };
+
+        // Nombre con el que se compara cada transferencia: el del banco o, si no vino, el de SAS (según el DNI)
+        $nombreMov = function (int $mid) use ($movs, $nombresSas): array {
+            $banco = trim((string)($movs[$mid]['nombre'] ?? ''));
+            if ($banco !== '') {
+                return [$banco, false];
+            }
+            $dni = (int)($movs[$mid]['dni'] ?? 0);
+            return isset($nombresSas[$dni]) ? [(string)$nombresSas[$dni], true] : ['', false];
         };
 
         // Cupones que no se controlan
@@ -99,12 +111,13 @@ final class Conciliador
             }
         }
 
-        // 3) Mismo nombre y mismo monto
+        // 3) Mismo nombre y mismo monto (el nombre puede venir del banco o, si el banco no lo informó, de SAS)
         foreach ($pendientes() as $cid => $c) {
             $lista = array_values(array_filter($candidatos($c, $this->tolDias), fn($mid) =>
-                Texto::nombresCoinciden($c['titular'] ?? '', $movs[$mid]['nombre'] ?? '')));
+                Texto::nombresCoinciden($c['titular'] ?? '', $nombreMov($mid)[0])));
             if ($lista) {
-                $asignar($cid, $masCercano($c, $lista), 'ok', 'Coincide nombre y monto');
+                $mid = $masCercano($c, $lista);
+                $asignar($cid, $mid, 'ok', $nombreMov($mid)[1] ? 'Coincide nombre (según SAS) y monto' : 'Coincide nombre y monto');
             }
         }
 

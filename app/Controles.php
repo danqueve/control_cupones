@@ -66,7 +66,15 @@ final class Controles
                 (int)config('tolerancia_dias_cuil', 5),
                 (int)config('dias_espera', 2)
             );
-            $res = $conc->conciliar($cupones, $movs);
+
+            // Transferencias que el banco informa solo con el CUIL (sin nombre): se le pregunta a SAS (solo lectura)
+            $dnisSinNombre = [];
+            foreach ($movs as $m) {
+                if (trim((string)$m['nombre']) === '' && !empty($m['dni'])) {
+                    $dnisSinNombre[] = (int)$m['dni'];
+                }
+            }
+            $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisSinNombre));
 
             // 3) Guardar el resultado en cada cupón y movimiento
             $pdo->exec('UPDATE movimientos SET cupon_id = NULL');
