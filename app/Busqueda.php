@@ -118,6 +118,7 @@ final class Busqueda
         return $out;
     }
 
+    /** Los cupones que el bot marcó como duplicados en la planilla no se muestran. */
     private static function traerCupones(string $where, array $params): array
     {
         $st = db()->prepare("SELECT c.*, m.fecha AS mov_fecha, m.monto AS mov_monto, m.dni AS mov_dni, m.cuit AS mov_cuit, m.nombre AS mov_nombre,
@@ -125,7 +126,8 @@ final class Busqueda
                              FROM cupones c
                              LEFT JOIN movimientos m ON m.id = c.movimiento_id
                              LEFT JOIN pendientes p ON p.cupon_id = c.id
-                             WHERE $where ORDER BY c.fecha_cupon DESC, c.id DESC LIMIT 500");
+                             WHERE ($where) AND (c.estado_bot IS NULL OR c.estado_bot NOT LIKE '%DUPLICADO%')
+                             ORDER BY c.fecha_cupon DESC, c.id DESC LIMIT 500");
         $st->execute($params);
         $out = [];
         foreach ($st->fetchAll() as $c) {

@@ -130,13 +130,14 @@ final class Controles
         $d = $desde->format('Y-m-d');
         $h = $hasta->format('Y-m-d');
 
-        // Cupones del período (con el movimiento del banco con el que se cruzaron)
+        // Cupones del período (con el movimiento del banco con el que se cruzaron), sin los duplicados de la planilla
         $pdo->prepare("INSERT INTO control_items (control_id, tipo, estado, detalle, cupon_id, movimiento_id, zona, fecha_cupon, cobrador,
                            titular, monto, billetera, nro_operacion, fecha_banco, nombre_banco, cuit_banco, dni)
                        SELECT ?, 'cupon', COALESCE(c.estado_conc, 'omitido'), c.detalle_conc, c.id, m.id, c.zona, c.fecha_cupon, c.cobrador,
                            c.titular, c.monto, c.billetera, c.nro_operacion, m.fecha, m.nombre, m.cuit, COALESCE(m.dni, c.dni)
                        FROM cupones c LEFT JOIN movimientos m ON m.id = c.movimiento_id
-                       WHERE c.en_planilla = 1 AND c.fecha_cupon BETWEEN ? AND ?")
+                       WHERE c.en_planilla = 1 AND c.fecha_cupon BETWEEN ? AND ?
+                         AND (c.estado_bot IS NULL OR c.estado_bot NOT LIKE '%DUPLICADO%')")
             ->execute([$controlId, $d, $h]);
 
         // Plata que entró sin cupón (solo transferencias de personas: traen CUIL)
@@ -208,7 +209,8 @@ final class Controles
 
     public static function items(int $controlId, string $tipo, ?string $estado = null): array
     {
-        $sql = 'SELECT * FROM control_items WHERE control_id = ? AND tipo = ?';
+        // Los controles anteriores pueden tener guardados cupones duplicados: no se muestran
+        $sql = "SELECT * FROM control_items WHERE control_id = ? AND tipo = ? AND (detalle IS NULL OR detalle <> 'Cupón duplicado')";
         $params = [$controlId, $tipo];
         if ($estado) {
             $sql .= ' AND estado = ?';
