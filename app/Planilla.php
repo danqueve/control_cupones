@@ -53,11 +53,11 @@ final class Planilla
                 $repetidas = [];
                 foreach ($zona['filas'] ?? [] as $f) {
                     $fila = self::normalizarFila($f);
-                    if ($fila['monto'] <= 0 && $fila['titular'] === '') {
+                    if ($fila['monto'] <= 0 && $fila['titular_planilla'] === '') {
                         continue;
                     }
                     $base = implode('|', [$nombreZona, $fila['fecha_recepcion'], $fila['cobrador'],
-                        number_format($fila['monto'], 2, '.', ''), $fila['nro_operacion'], $fila['titular']]);
+                        number_format($fila['monto'], 2, '.', ''), $fila['nro_operacion'], $fila['titular_planilla']]);
                     $repetidas[$base] = ($repetidas[$base] ?? 0) + 1;
                     $clave = sha1($base . '#' . $repetidas[$base]);
                     if (!isset($existentes[$clave])) {
@@ -86,7 +86,13 @@ final class Planilla
         $txt = fn($k, $max = 200) => mb_substr(trim((string)($f[$k] ?? '')), 0, $max);
         $fechaCupon = Texto::fechaTexto($f['fecha_comprobante'] ?? '') ?? Texto::fechaTexto($f['fecha_recepcion'] ?? '');
         $cbu = $txt('cbu', 150);
-        $cuit = Texto::extraerCuit($txt('cuil')) ?: Texto::extraerCuit($cbu) ?: Texto::extraerCuit($txt('titular'));
+        // Ignora el CUIT de Imperio Comercial: BNA+ y otros comprobantes lo muestran como destinatario
+        $cuit = Texto::extraerCuitAjeno($txt('cuil')) ?: Texto::extraerCuitAjeno($cbu) ?: Texto::extraerCuitAjeno($txt('titular'));
+        $titularPlanilla = $txt('titular', 200);
+        $titular = $titularPlanilla;
+        if (preg_match('/^\s*imperio\s+comercial\b/i', $titular)) {
+            $titular = '';   // es el destinatario, no quien pagó
+        }
 
         return [
             'fila' => isset($f['fila']) ? (int)$f['fila'] : null,
@@ -94,7 +100,8 @@ final class Planilla
             'fecha_cupon' => $fechaCupon ? $fechaCupon->format('Y-m-d') : null,
             'hora' => $txt('hora', 10),
             'cobrador' => $txt('remitente', 150),
-            'titular' => $txt('titular', 200),
+            'titular' => $titular,
+            'titular_planilla' => $titularPlanilla,   // tal cual está en la planilla: forma parte de la clave del cupón
             'monto' => round(Texto::monto($f['monto'] ?? 0), 2),
             'billetera' => $txt('billetera', 100),
             'nro_operacion' => $txt('nro_operacion', 100),

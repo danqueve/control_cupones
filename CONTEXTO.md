@@ -210,3 +210,5 @@ Pasadas en orden; una transferencia se asigna a un solo cupón; en empate gana l
 - La lógica de cruce vive en `Conciliador` (pura, sin base de datos) para poder probarla con arrays.
 - No guardar claves en el repo. No escribir jamás en la base de SAS.
 - Antes de cambiar una regla de conciliación, probar con el Excel real de Macro y comparar los contadores del control.
+
+- **CUIT propio ignorado:** BNA+ y PREX muestran solo al destinatario (Imperio Comercial, CUIT 30-71907246-8); no traen datos de quien pagó. El sistema ignora ese CUIT (`Texto::CUITS_PROPIOS`) y un titular que empiece con "Imperio Comercial", para no agrupar esos cupones en una falsa persona (DNI 71907246).

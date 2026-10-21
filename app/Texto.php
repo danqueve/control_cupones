@@ -7,6 +7,9 @@ declare(strict_types=1);
  */
 final class Texto
 {
+    /** CUIT de Imperio Comercial SAS: es el del destinatario en los comprobantes, nunca el de quien pagó. */
+    public const CUITS_PROPIOS = ['30719072468'];
+
     private const PREFIJOS_CUIT = '(?:20|23|24|25|26|27|30|33|34)';
 
     public static function normalizar(?string $s): string
@@ -70,6 +73,21 @@ final class Texto
         }
         if (preg_match('/(?:^|\D)(' . self::PREFIJOS_CUIT . ')-(\d{8})-(\d)(?!\d)/', $t, $m)) {
             return $m[1] . $m[2] . $m[3];
+        }
+        return '';
+    }
+
+    /** Primer CUIT/CUIL del texto que no sea el propio de Imperio Comercial ('' si no hay). */
+    public static function extraerCuitAjeno(?string $texto): string
+    {
+        $t = (string)$texto;
+        if (preg_match_all('/(?:^|\D)(' . self::PREFIJOS_CUIT . ')-?(\d{8})-?(\d)(?!\d)/', $t, $todos, PREG_SET_ORDER)) {
+            foreach ($todos as $m) {
+                $cuit = $m[1] . $m[2] . $m[3];
+                if (!in_array($cuit, self::CUITS_PROPIOS, true)) {
+                    return $cuit;
+                }
+            }
         }
         return '';
     }
