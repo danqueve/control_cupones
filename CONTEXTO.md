@@ -194,7 +194,9 @@ Pasadas en orden; una transferencia se asigna a un solo cupón; en empate gana l
   y reset de `estado_conc` en `cupones`).
 
 **Ideas de mejora (no hechas)**
-- Que el bot extraiga el **CUIL del pagador** como columna propia (`CUIL Origen`): sube mucho la precisión del paso 2 de la conciliación.
+- Que el bot extraiga el **CUIL del pagador** como campo propio (`CUIL Origen`). Hoy el bot ya lee un campo `cuit_cbu_origen` y lo guarda en la columna
+  `CBU/CVU/Alias`; el control saca el CUIL de ahí si el modelo devolvió un CUIL y no un CBU/alias. Un campo separado lo haría más confiable.
+  Antes de hacerlo, medir cuántos cupones ya tienen CUIL (`SELECT COUNT(*), SUM(cuit IS NOT NULL) FROM cupones`).
 - Guardar la imagen del cupón en Drive y mostrarla en el control.
 - Exportar a Excel el resultado de un control / la lista de pendientes.
 - Cron cada 30 min para sincronizar la planilla (`bin/sincronizar.php`; hoy es bajo demanda).
