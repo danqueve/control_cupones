@@ -443,3 +443,11 @@ details.resolver[open] > summary { display: none; }
   .ocultar-cel { display: none; }
 }
 .tabla-tarjetas tr[hidden], .tabla-tarjetas td.ocultar-cel { display: none !important; }
+
+/* Confirmar un cupón a mano */
+.comparar { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
+.comparar h2 { font-size: 15px; font-weight: 800; margin-bottom: 10px; }
+.datos { display: grid; grid-template-columns: 130px 1fr; gap: 8px 14px; margin: 0; font-size: 14px; }
+.datos dt { color: var(--texto-2); }
+.datos dd { margin: 0; font-weight: 600; word-break: break-word; }
+.accion-confirmar { display: inline-block; margin-bottom: 4px; }

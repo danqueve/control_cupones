@@ -41,6 +41,9 @@ if ($items && $f !== 'sin_cupon') {
     }
 }
 
+$confirmados = Controles::confirmaciones(array_filter(array_column($items, 'cupon_id')));
+$irConfirmar = fn($it) => 'confirmar.php?cupon=' . (int)$it['cupon_id'] . '&amp;control=' . $id . '&amp;f=' . urlencode($f);
+
 $cuadro = function (string $estado, string $rotulo, int $cantidad, string $filtro) use ($montos, $f, $id) {
     $info = estado_info($estado);
     $elegido = $f === $filtro ? ' elegido' : '';
@@ -187,8 +190,10 @@ encabezado('Control #' . $id, 'control');
                 </td>
                 <td class="monto-fila"><?= dinero($it['monto']) ?></td>
                 <td class="acciones">
+                  <?php if ($it['estado'] === 'revisar'): ?><a class="accion-confirmar" href="<?= $irConfirmar($it) ?>">Confirmar →</a><?php endif; ?>
+                  <?php if (isset($confirmados[$it['cupon_id']])): ?><a href="<?= $irConfirmar($it) ?>">Ver confirmación →</a><?php endif; ?>
                   <?php if (isset($pendAbiertos[$it['cupon_id']])): ?><a href="pendientes.php">En seguimiento →</a>
-                  <?php elseif ($dni): ?><a href="buscar.php?q=<?= $dni ?>">Ver persona →</a><?php endif; ?>
+                  <?php elseif ($dni): ?><div><a href="buscar.php?q=<?= $dni ?>">Ver persona →</a></div><?php endif; ?>
                 </td>
               </tr>
             <?php endif; ?>

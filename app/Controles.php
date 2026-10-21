@@ -76,6 +76,9 @@ final class Controles
             }
             $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisSinNombre));
 
+            // Lo que una persona confirmó a mano se mantiene como acreditado
+            self::aplicarConfirmaciones($res);
+
             // 3) Guardar el resultado en cada cupón y movimiento
             $pdo->exec('UPDATE movimientos SET cupon_id = NULL');
             $upMov = $pdo->prepare('UPDATE movimientos SET cupon_id = ? WHERE id = ?');
@@ -107,6 +110,121 @@ final class Controles
             throw $e;
         } finally {
             $pdo->query("SELECT RELEASE_LOCK('control_cupones')");
+        }
+    }
+
+    // ─── Confirmación a mano de cupones "a revisar" ───────────────────
+
+    /** @return array<int, array> cupon_id => fila de confirmaciones */
+    public static function confirmaciones(?array $cuponIds = null): array
+    {
+        $filas = db()->query('SELECT * FROM confirmaciones')->fetchAll();
+        $mapa = [];
+        foreach ($filas as $f) {
+            $mapa[(int)$f['cupon_id']] = $f;
+        }
+        return $cuponIds === null ? $mapa : array_intersect_key($mapa, array_flip(array_map('intval', $cuponIds)));
+    }
+
+    public static function textoConfirmacion(array $c): string
+    {
+        $t = 'Confirmado a mano por ' . $c['confirmado_por'] . ' el ' . date('d/m', strtotime((string)$c['confirmado_en']))
+            . ((string)$c['nota'] !== '' ? ': ' . $c['nota'] : '');
+        return mb_substr($t, 0, 200);
+    }
+
+    /** Un cupón que el cruce dejó "a revisar" y alguien ya confirmó queda acreditado. */
+    private static function aplicarConfirmaciones(array &$res): void
+    {
+        foreach (self::confirmaciones() as $cuponId => $c) {
+            if (($res['cupones'][$cuponId]['estado'] ?? '') === 'revisar') {
+                $res['cupones'][$cuponId]['estado'] = 'ok';
+                $res['cupones'][$cuponId]['detalle'] = self::textoConfirmacion($c);
+            }
+        }
+    }
+
+    /** @return string|null mensaje de error, o null si salió bien */
+    public static function confirmarCupon(int $cuponId, string $nota, string $usuario): ?string
+    {
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $st = $pdo->prepare('SELECT estado_conc, detalle_conc, movimiento_id FROM cupones WHERE id = ? FOR UPDATE');
+            $st->execute([$cuponId]);
+            $c = $st->fetch();
+            if (!$c) {
+                $pdo->rollBack();
+                return 'No encontré ese cupón.';
+            }
+            if ($c['estado_conc'] !== 'revisar') {
+                $pdo->rollBack();
+                return 'Ese cupón ya no está "a revisar".';
+            }
+            $conf = [
+                'confirmado_por' => mb_substr($usuario, 0, 100),
+                'confirmado_en' => date('Y-m-d H:i:s'),
+                'nota' => mb_substr(trim($nota), 0, 300),
+            ];
+            $pdo->prepare('INSERT INTO confirmaciones (cupon_id, movimiento_id, nota, detalle_original, confirmado_por, confirmado_en)
+                           VALUES (?, ?, ?, ?, ?, ?)
+                           ON DUPLICATE KEY UPDATE movimiento_id = VALUES(movimiento_id), nota = VALUES(nota),
+                               detalle_original = VALUES(detalle_original), confirmado_por = VALUES(confirmado_por),
+                               confirmado_en = VALUES(confirmado_en)')
+                ->execute([$cuponId, $c['movimiento_id'], $conf['nota'], $c['detalle_conc'], $conf['confirmado_por'], $conf['confirmado_en']]);
+            $detalle = self::textoConfirmacion($conf);
+            self::cambiarEstado($cuponId, 'revisar', 'ok', $detalle);
+            $pdo->commit();
+            return null;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /** @return string|null mensaje de error, o null si salió bien */
+    public static function quitarConfirmacion(int $cuponId): ?string
+    {
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $st = $pdo->prepare('SELECT * FROM confirmaciones WHERE cupon_id = ? FOR UPDATE');
+            $st->execute([$cuponId]);
+            $conf = $st->fetch();
+            if (!$conf) {
+                $pdo->rollBack();
+                return 'Ese cupón no estaba confirmado a mano.';
+            }
+            $pdo->prepare('DELETE FROM confirmaciones WHERE cupon_id = ?')->execute([$cuponId]);
+            self::cambiarEstado($cuponId, 'ok', 'revisar', $conf['detalle_original'] ?: 'Coincide monto y fecha, pero no el nombre');
+            $pdo->commit();
+            return null;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /** Cambia el estado del cupón y de su foto en los controles donde aparece, y recuenta esos controles. */
+    private static function cambiarEstado(int $cuponId, string $desde, string $hacia, string $detalle): void
+    {
+        $pdo = db();
+        $pdo->prepare('UPDATE cupones SET estado_conc = ?, detalle_conc = ? WHERE id = ?')->execute([$hacia, $detalle, $cuponId]);
+        $st = $pdo->prepare("SELECT DISTINCT control_id FROM control_items WHERE cupon_id = ? AND tipo = 'cupon' AND estado = ?");
+        $st->execute([$cuponId, $desde]);
+        $controles = $st->fetchAll(PDO::FETCH_COLUMN);
+        $pdo->prepare("UPDATE control_items SET estado = ?, detalle = ? WHERE cupon_id = ? AND tipo = 'cupon' AND estado = ?")
+            ->execute([$hacia, $detalle, $cuponId, $desde]);
+        $conteo = $pdo->prepare("SELECT estado, COUNT(*) FROM control_items WHERE control_id = ? AND tipo = 'cupon' GROUP BY estado");
+        $guardar = $pdo->prepare('UPDATE controles SET ok = ?, revisar = ?, no_figuran = ?, espera = ? WHERE id = ?');
+        foreach ($controles as $controlId) {
+            $conteo->execute([$controlId]);
+            $n = $conteo->fetchAll(PDO::FETCH_KEY_PAIR);
+            $guardar->execute([(int)($n['ok'] ?? 0), (int)($n['revisar'] ?? 0), (int)($n['no'] ?? 0), (int)($n['espera'] ?? 0), $controlId]);
         }
     }
 

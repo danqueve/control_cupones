@@ -8,6 +8,7 @@ en la cuenta del **Banco Macro**.
 - **Resultado:** ✅ acreditados · 🟡 a revisar · ❌ no figuran en el banco · 💵 plata que entró sin cupón.
 - **Pendientes:** los cupones que no figuran quedan en seguimiento hasta que aparecen en otro resumen (se resuelven solos) o se resuelven a mano con una nota.
 - **Buscador:** por DNI o CUIL (completo o parcial) o por nombre y apellido de quien pagó.
+- **Confirmar a mano:** un cupón "a revisar" se puede confirmar desde el resultado del control (botón "Confirmar →"): se ve el cupón junto a la transferencia, se agrega una nota y pasa a acreditado. La confirmación queda guardada (tabla `confirmaciones`) y se mantiene en los controles siguientes; se puede quitar.
 - **Excel:** el botón "Descargar Excel" baja el control completo (cupones con su estado + plata sin cupón) o la lista de pendientes. El archivo se arma en el navegador, no necesita nada extra en el servidor.
 - **Historial:** cada control y cada búsqueda quedan guardados.
 - **SAS Imperio (solo lectura):** muestra el nombre del cliente por DNI.
@@ -143,7 +144,11 @@ Verificar que las carpetas internas están bloqueadas (tiene que dar 403):
 cd /home/c2881399/public_html/control && git pull origin main
 ```
 
-Si un cambio agrega tablas o columnas, se indica en el commit y se corre el SQL correspondiente.
+Si un cambio agrega tablas, se indica en el commit y se corre (es seguro repetirlo, no toca los datos):
+
+```bash
+/usr/local/lsws/lsphp83/bin/php bin/migrar.php
+```
 
 ## Opcional: leer la planilla cada 30 minutos (cron)
 
@@ -162,6 +167,8 @@ No hace falta: la planilla se lee sola al subir un resumen y al buscar (si pasar
 | `buscar.php` | Buscador por DNI / CUIL / nombre |
 | `pendientes.php` | Cupones en seguimiento |
 | `historial.php` | Controles y búsquedas anteriores |
+| `confirmar.php` | Confirmar a mano un cupón "a revisar" (o quitar la confirmación) |
+| `bin/migrar.php` | Crea las tablas nuevas que falten |
 | `api/subir.php` | Recibe el Excel ya leído y ejecuta el control |
 | `app/Banco.php` | Lee el Excel de Macro (fechas, montos, CUIL, nombre) |
 | `app/Conciliador.php` | Cruza cupones con transferencias |

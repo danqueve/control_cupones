@@ -212,3 +212,4 @@ Pasadas en orden; una transferencia se asigna a un solo cupón; en empate gana l
 - Antes de cambiar una regla de conciliación, probar con el Excel real de Macro y comparar los contadores del control.
 
 - **CUIT propio ignorado:** BNA+ y PREX muestran solo al destinatario (Imperio Comercial, CUIT 30-71907246-8); no traen datos de quien pagó. El sistema ignora ese CUIT (`Texto::CUITS_PROPIOS`) y un titular que empiece con "Imperio Comercial", para no agrupar esos cupones en una falsa persona (DNI 71907246).
+- **Confirmar a mano:** `confirmar.php` + tabla `confirmaciones` (cupon_id único, nota, quién, cuándo, detalle original). Solo para cupones en `revisar`. `Controles::aplicarConfirmaciones` los deja `ok` en cada control nuevo; `confirmarCupon`/`quitarConfirmacion` actualizan el cupón, su foto en `control_items` y los contadores de los controles donde aparece. Tablas nuevas: `php bin/migrar.php` (idempotente).

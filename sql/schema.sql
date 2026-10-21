@@ -135,3 +135,14 @@ CREATE TABLE IF NOT EXISTS ajustes (
   clave VARCHAR(50)  NOT NULL PRIMARY KEY,
   valor VARCHAR(255) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Cupones "a revisar" que una persona confirmó a mano (se mantienen al volver a cruzar)
+CREATE TABLE IF NOT EXISTS confirmaciones (
+  id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  cupon_id         INT UNSIGNED NOT NULL UNIQUE,
+  movimiento_id    INT UNSIGNED NULL,
+  nota             VARCHAR(300) NULL,
+  detalle_original VARCHAR(200) NULL,
+  confirmado_por   VARCHAR(100) NOT NULL,
+  confirmado_en    DATETIME     NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
