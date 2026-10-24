@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS cupones (
   id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   clave           CHAR(40)      NOT NULL UNIQUE,
   zona            VARCHAR(100)  NOT NULL,
+  periodo         CHAR(7)       NULL,            -- '2026-10' = año-mes
   fila_planilla   INT           NULL,
   fecha_recepcion VARCHAR(40)   NULL,
   fecha_cupon     DATE          NULL,
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS cupones (
   INDEX idx_cup_dni (dni),
   INDEX idx_cup_fecha (fecha_cupon),
   INDEX idx_cup_monto (monto),
-  INDEX idx_cup_estado (estado_conc)
+  INDEX idx_cup_estado (estado_conc),
+  INDEX idx_cup_periodo (periodo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Transferencias recibidas según los resúmenes del Banco Macro (historial acumulado)

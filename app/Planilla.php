@@ -18,20 +18,51 @@ final class Planilla
         return self::sincronizar();
     }
 
-    /** @return array ['cupones' => int, 'nuevos' => int, 'zonas' => string[]] */
-    public static function sincronizar(): array
+    /**
+     * Devuelve los meses disponibles en la planilla (para el selector de la UI).
+     * @return string[] ej: ['2026-10', '2026-09', 'sin-mes']
+     */
+    public static function mesesDisponibles(): array
     {
-        $datos = self::descargar();
+        $url = (string)config('planilla.url');
+        $token = (string)config('planilla.token');
+        if ($url === '' || $token === '') {
+            return [];
+        }
+
+        $sep = str_contains($url, '?') ? '&' : '?';
+        $ch = curl_init($url . $sep . 'token=' . rawurlencode($token) . '&meses=true');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => 30,
+        ]);
+        $cuerpo = curl_exec($ch);
+        curl_close($ch);
+        $datos = json_decode((string)$cuerpo, true);
+        return $datos['meses'] ?? [];
+    }
+
+    /** @return array ['cupones' => int, 'nuevos' => int, 'zonas' => string[]] */
+    public static function sincronizar(?string $periodo = null): array
+    {
+        $datos = self::descargar($periodo);
         $ahora = date('Y-m-d H:i:s');
         $pdo = db();
 
         $existentes = $pdo->query('SELECT clave FROM cupones')->fetchAll(PDO::FETCH_COLUMN);
         $existentes = array_flip($existentes);
 
-        $sql = 'INSERT INTO cupones (clave, zona, fila_planilla, fecha_recepcion, fecha_cupon, hora, cobrador, titular, monto,
+        // Determinar periodo: del parámetro, o del JSON del Exportador
+        $periodoSync = $periodo ?: ($datos['periodo'] ?? null);
+        if ($periodoSync === 'todos') {
+            $periodoSync = null;
+        }
+
+        $sql = 'INSERT INTO cupones (clave, zona, periodo, fila_planilla, fecha_recepcion, fecha_cupon, hora, cobrador, titular, monto,
                     billetera, nro_operacion, cbu_alias, cuit, dni, estado_bot, msg_id, en_planilla, sincronizado_en)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-                ON DUPLICATE KEY UPDATE zona = VALUES(zona), fila_planilla = VALUES(fila_planilla),
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                ON DUPLICATE KEY UPDATE zona = VALUES(zona), periodo = VALUES(periodo), fila_planilla = VALUES(fila_planilla),
                     fecha_cupon = VALUES(fecha_cupon), hora = VALUES(hora), titular = VALUES(titular), monto = VALUES(monto),
                     billetera = VALUES(billetera), nro_operacion = VALUES(nro_operacion), cbu_alias = VALUES(cbu_alias),
                     cuit = VALUES(cuit), dni = VALUES(dni), estado_bot = VALUES(estado_bot),
@@ -63,8 +94,17 @@ final class Planilla
                     if (!isset($existentes[$clave])) {
                         $nuevos++;
                     }
+                    // Periodo: del sync param, o calcular de fecha_recepcion (dd/mm/yyyy)
+                    $perCupon = $periodoSync;
+                    if (!$perCupon && $fila['fecha_recepcion']) {
+                        $partes = explode('/', $fila['fecha_recepcion']);
+                        if (count($partes) === 3) {
+                            $perCupon = $partes[2] . '-' . str_pad($partes[1], 2, '0', STR_PAD_LEFT);
+                        }
+                    }
+
                     $st->execute([
-                        $clave, $nombreZona, $fila['fila'], $fila['fecha_recepcion'], $fila['fecha_cupon'], $fila['hora'],
+                        $clave, $nombreZona, $perCupon, $fila['fila'], $fila['fecha_recepcion'], $fila['fecha_cupon'], $fila['hora'],
                         $fila['cobrador'], $fila['titular'], $fila['monto'], $fila['billetera'], $fila['nro_operacion'],
                         $fila['cbu_alias'], $fila['cuit'], $fila['dni'], $fila['estado_bot'], $fila['msg_id'], $ahora,
                     ]);
@@ -113,7 +153,7 @@ final class Planilla
         ];
     }
 
-    private static function descargar(): array
+    private static function descargar(?string $periodo = null): array
     {
         $url = (string)config('planilla.url');
         $token = (string)config('planilla.token');
@@ -121,7 +161,11 @@ final class Planilla
             throw new RuntimeException('Falta configurar la conexión con la planilla (app/config.php → planilla).');
         }
 
-        $ch = curl_init($url . (str_contains($url, '?') ? '&' : '?') . 'token=' . rawurlencode($token));
+        $params = 'token=' . rawurlencode($token);
+        if ($periodo && preg_match('/^\d{4}-\d{2}$/', $periodo)) {
+            $params .= '&periodo=' . rawurlencode($periodo);
+        }
+        $ch = curl_init($url . (str_contains($url, '?') ? '&' : '?') . $params);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,   // Apps Script responde con una redirección

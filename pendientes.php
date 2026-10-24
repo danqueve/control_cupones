@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ->execute([$id]);
         flash('Se volvió a poner en pendientes.');
     }
-    $q = array_intersect_key($_GET, ['ver' => 1, 'agrupar' => 1]);
+    $q = array_intersect_key($_GET, ['ver' => 1, 'agrupar' => 1, 'periodo' => 1]);
     header('Location: pendientes.php' . ($q ? '?' . http_build_query($q) : ''));
     exit;
 }
@@ -28,11 +28,27 @@ $verResueltos = ($_GET['ver'] ?? '') === 'resueltos';
 $agrupaciones = ['cobrador' => 'Cobrador', 'zona' => 'Zona', 'fecha' => 'Fecha'];
 $agrupar = isset($agrupaciones[$_GET['agrupar'] ?? '']) ? $_GET['agrupar'] : 'cobrador';
 
-$st = db()->prepare("SELECT p.*, c.zona, c.fecha_cupon, c.cobrador, c.titular, c.monto, c.billetera, c.nro_operacion, c.dni, c.estado_conc
+// Filtro por periodo (mes)
+$periodoFiltro = $_GET['periodo'] ?? '';
+if ($periodoFiltro && !preg_match('/^\d{4}-\d{2}$/', $periodoFiltro)) {
+    $periodoFiltro = '';
+}
+
+// Meses disponibles para el selector
+$mesesDB = db()->query("SELECT DISTINCT c.periodo FROM pendientes p JOIN cupones c ON c.id = p.cupon_id WHERE c.periodo IS NOT NULL ORDER BY c.periodo DESC")->fetchAll(PDO::FETCH_COLUMN);
+
+$where = 'p.estado = ?';
+$params = [$verResueltos ? 'resuelto' : 'pendiente'];
+if ($periodoFiltro) {
+    $where .= ' AND c.periodo = ?';
+    $params[] = $periodoFiltro;
+}
+
+$st = db()->prepare("SELECT p.*, c.zona, c.periodo, c.fecha_cupon, c.cobrador, c.titular, c.monto, c.billetera, c.nro_operacion, c.dni, c.estado_conc
                      FROM pendientes p JOIN cupones c ON c.id = p.cupon_id
-                     WHERE p.estado = ?
+                     WHERE $where
                      ORDER BY " . ($verResueltos ? 'p.resuelto_en DESC LIMIT 200' : 'c.fecha_cupon ASC'));
-$st->execute([$verResueltos ? 'resuelto' : 'pendiente']);
+$st->execute($params);
 $lista = $st->fetchAll();
 $total = array_sum(array_column($lista, 'monto'));
 $cantResueltos = $verResueltos ? count($lista) : null;
@@ -61,8 +77,8 @@ if ($agrupar !== 'fecha') {
 }
 $cobradores = count(array_unique(array_filter(array_column($lista, 'cobrador'))));
 
-$url = function (array $cambios) use ($verResueltos, $agrupar): string {
-    $q = array_merge(['ver' => $verResueltos ? 'resueltos' : null, 'agrupar' => $agrupar !== 'cobrador' ? $agrupar : null], $cambios);
+$url = function (array $cambios) use ($verResueltos, $agrupar, $periodoFiltro): string {
+    $q = array_merge(['ver' => $verResueltos ? 'resueltos' : null, 'agrupar' => $agrupar !== 'cobrador' ? $agrupar : null, 'periodo' => $periodoFiltro ?: null], $cambios);
     $q = array_filter($q, fn($v) => $v !== null);
     return 'pendientes.php' . ($q ? '?' . http_build_query($q) : '');
 };
@@ -88,7 +104,7 @@ encabezado('Pendientes', 'pendientes');
     <h1>Pendientes de seguir</h1>
     <p>Cupones que llegaron por WhatsApp pero la plata no figura en el banco. Si aparece en un próximo resumen se resuelven solos; si no, consultalo con el cobrador y cerralo con el motivo.</p>
   </div>
-  <?php if ($lista) { boton_excel('pendientes-' . ($verResueltos ? 'resueltos-' : '') . date('Y-m-d'), [$hojaPend]); } ?>
+  <?php if ($lista) { boton_excel('pendientes-' . ($verResueltos ? 'resueltos-' : '') . ($periodoFiltro ? $periodoFiltro . '-' : '') . date('Y-m-d'), [$hojaPend]); } ?>
 </header>
 
 <?php if (!$verResueltos && $lista): ?>
@@ -116,21 +132,38 @@ encabezado('Pendientes', 'pendientes');
   </section>
 <?php endif; ?>
 
-<div class="fila entre">
+<div class="fila entre" style="flex-wrap: wrap; gap: 10px">
   <nav class="chips" aria-label="Estado">
     <a class="chip<?= !$verResueltos ? ' activo' : '' ?>" href="<?= h($url(['ver' => null])) ?>"<?= !$verResueltos ? ' aria-current="true"' : '' ?>>Pendientes <span class="mono"><?= $cantPendientes ?></span></a>
     <a class="chip<?= $verResueltos ? ' activo' : '' ?>" href="<?= h($url(['ver' => 'resueltos'])) ?>"<?= $verResueltos ? ' aria-current="true"' : '' ?>>Resueltos</a>
   </nav>
-  <?php if ($lista): ?>
-    <div class="fila" style="gap: 10px; font-size: 14px; color: var(--texto-2)">
+  <div class="fila" style="gap: 10px; font-size: 14px; color: var(--texto-2); flex-wrap: wrap">
+    <?php if ($mesesDB): ?>
+      <label style="display: flex; align-items: center; gap: 6px">
+        <?= icono('calendario') ?> Mes
+        <select onchange="location.href=this.value" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--borde); background: var(--fondo); color: var(--texto); font-size: 14px">
+          <option value="<?= h($url(['periodo' => null])) ?>"<?= !$periodoFiltro ? ' selected' : '' ?>>Todos los meses</option>
+          <?php
+          $mesesNombre = ['01'=>'Enero','02'=>'Febrero','03'=>'Marzo','04'=>'Abril','05'=>'Mayo','06'=>'Junio',
+                          '07'=>'Julio','08'=>'Agosto','09'=>'Septiembre','10'=>'Octubre','11'=>'Noviembre','12'=>'Diciembre'];
+          foreach ($mesesDB as $m):
+            $partes = explode('-', $m);
+            $etiqueta = ($mesesNombre[$partes[1]] ?? $partes[1]) . ' ' . $partes[0];
+          ?>
+            <option value="<?= h($url(['periodo' => $m])) ?>"<?= $periodoFiltro === $m ? ' selected' : '' ?>><?= h($etiqueta) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+    <?php endif; ?>
+    <?php if ($lista): ?>
       <span id="agrupar">Agrupar por</span>
       <nav class="segmentos" aria-labelledby="agrupar">
         <?php foreach ($agrupaciones as $clave => $texto): ?>
           <a href="<?= h($url(['agrupar' => $clave === 'cobrador' ? null : $clave])) ?>" class="<?= $agrupar === $clave ? 'activo' : '' ?>"<?= $agrupar === $clave ? ' aria-current="true"' : '' ?>><?= h($texto) ?></a>
         <?php endforeach; ?>
       </nav>
-    </div>
-  <?php endif; ?>
+    <?php endif; ?>
+  </div>
 </div>
 
 <?php if (!$lista): ?>
