@@ -8,7 +8,11 @@
  */
 declare(strict_types=1);
 
-require __DIR__ . '/../app/init.php';
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+require __DIR__ . '/../app/bootstrap.php';
 
 $pdo = db();
 
