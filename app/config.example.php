@@ -45,4 +45,10 @@ return [
     'dias_espera'          => 2,
 
     'zona_horaria' => 'America/Argentina/Tucuman',
+
+    // API read-only (server-to-server) consumida por SAS Imperio.
+    // Token Bearer fijo, rotación manual. Generar con: openssl rand -hex 32
+    'api' => [
+        'token' => 'CAMBIAR_TOKEN_LARGO',
+    ],
 ];

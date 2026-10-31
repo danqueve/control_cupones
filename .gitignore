@@ -1,6 +1,9 @@
 # Configuración con contraseñas: nunca a GitHub
 app/config.php
 
+# Logs de requests a la API (pueden traer IPs, rangos consultados)
+logs/*.log
+
 # Exportes del banco o de la base
 *.xls
 *.xlsx
