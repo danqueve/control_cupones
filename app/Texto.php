@@ -80,7 +80,10 @@ final class Texto
     /** Primer CUIT/CUIL del texto que no sea el propio de Imperio Comercial ('' si no hay). */
     public static function extraerCuitAjeno(?string $texto): string
     {
-        $t = (string)$texto;
+        // ​ (zero-width space) aparece copiado/pegado en medio de algunos
+        // CUIL de la planilla (visto en datos reales) y corta la racha de
+        // \d{8} del regex de abajo -- sacarlo antes de buscar el patrón.
+        $t = str_replace("\xE2\x80\x8B", '', (string)$texto);
         if (preg_match_all('/(?:^|\D)(' . self::PREFIJOS_CUIT . ')-?(\d{8})-?(\d)(?!\d)/', $t, $todos, PREG_SET_ORDER)) {
             foreach ($todos as $m) {
                 $cuit = $m[1] . $m[2] . $m[3];
