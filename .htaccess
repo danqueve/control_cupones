@@ -3,8 +3,17 @@
 Options -Indexes
 DirectoryIndex index.php
 
+# API /api/v1: que el token (Authorization: Bearer ...) llegue a PHP.
+# Con PHP como CGI/FPM/LSAPI, Apache no lo pasa por defecto y la API
+# respondería 401 "Falta el token" aunque SAS lo mande bien.
+<IfModule mod_setenvif.c>
+  SetEnvIf Authorization "(.+)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  RewriteCond %{HTTP:Authorization} .+
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
   # Siempre por HTTPS (salvo en la PC local: XAMPP / WAMP)
   RewriteCond %{HTTPS} off
