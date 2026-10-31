@@ -195,6 +195,46 @@ function responder_json(array $datos, int $codigo = 200): void
     exit;
 }
 
+// ─── API read-only (server-to-server, token Bearer) ──────────────
+/**
+ * Valida el header Authorization: Bearer <token> contra api.token.
+ * Si falta o no coincide, responde 401/403 y corta la ejecución.
+ */
+function requerir_token_api(): void
+{
+    $esperado = (string)config('api.token', '');
+    if ($esperado === '') {
+        responder_json(['error' => 'API no configurada.'], 500);
+    }
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+    if (!preg_match('/^Bearer\s+(.+)$/i', trim($header), $m)) {
+        responder_json(['error' => 'Falta el token.'], 401);
+    }
+    if (!hash_equals($esperado, $m[1])) {
+        responder_json(['error' => 'Token inválido.'], 403);
+    }
+}
+
+/**
+ * Loguea un request a la API en logs/api-YYYY-MM.log (un archivo por mes).
+ * Nunca loguea el token ni el payload de respuesta completo — solo metadata.
+ */
+function log_api_request(string $endpoint, int $http_code, float $inicio, string $extra = ''): void
+{
+    $linea = sprintf(
+        "[%s] %s %s ip=%s code=%d dur_ms=%d%s\n",
+        date('Y-m-d H:i:s'),
+        $endpoint,
+        $_SERVER['REQUEST_METHOD'] ?? '-',
+        $_SERVER['REMOTE_ADDR'] ?? '-',
+        $http_code,
+        (int)round((microtime(true) - $inicio) * 1000),
+        $extra !== '' ? ' ' . $extra : ''
+    );
+    $archivo = __DIR__ . '/../logs/api-' . date('Y-m') . '.log';
+    @file_put_contents($archivo, $linea, FILE_APPEND | LOCK_EX);
+}
+
 /** Etiquetas y colores de cada estado de conciliación. */
 function estado_info(string $estado): array
 {
