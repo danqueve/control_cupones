@@ -72,4 +72,18 @@ final class Normalizador
         }
         return (int) round(Texto::monto($crudo) * 100);
     }
+
+    /**
+     * Bloque "a quién se le acredita este pago" que comparten /api/v1/movimientos
+     * y /api/v1/comprobantes, para que ambos endpoints informen lo mismo de la
+     * misma forma (ver app/Terceros.php). Si $esTercero es falso, dni_cliente_sas
+     * viene null y el consumidor sigue usando el DNI/CUIL de origen de siempre.
+     */
+    public static function payloadTercero(?int $dniEfectivo, bool $esTercero): array
+    {
+        return [
+            'dni_cliente_sas' => $esTercero && $dniEfectivo ? $dniEfectivo : null,
+            'es_tercero'      => $esTercero,
+        ];
+    }
 }

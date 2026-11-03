@@ -39,16 +39,23 @@ if ((strtotime($hasta) - strtotime($desde)) > 100 * 86400) {
 
 try {
     $st = db()->prepare("
-        SELECT id, msg_id, fecha_cupon, hora, monto, zona, cobrador, billetera,
-               nro_operacion, titular, cbu_alias, cuit, dni, estado_bot, estado_conc
-        FROM cupones
-        WHERE fecha_cupon BETWEEN ? AND ?
-        ORDER BY fecha_cupon ASC, hora ASC, id ASC
+        SELECT c.id, c.msg_id, c.fecha_cupon, c.hora, c.monto, c.zona, c.cobrador, c.billetera,
+               c.nro_operacion, c.titular, c.cbu_alias, c.cuit, c.dni, c.estado_bot, c.estado_conc,
+               m.dni_efectivo, m.es_tercero
+        FROM cupones c
+        LEFT JOIN movimientos m ON m.id = c.movimiento_id
+        WHERE c.fecha_cupon BETWEEN ? AND ?
+        ORDER BY c.fecha_cupon ASC, c.hora ASC, c.id ASC
     ");
     $st->execute([$desde, $hasta]);
     $filas = $st->fetchAll();
 
-    $data = array_map(static function (array $c): array {
+    // Pagadores terceros vigentes, para los cupones que el bot cargó ya con el CUIL
+    // del tercero pero todavía no se cruzaron contra ninguna transferencia del banco
+    // (si ya se cruzaron, se usa el dni_efectivo real de esa transferencia, más abajo).
+    $mapaTerceros = Terceros::mapaActivo();
+
+    $data = array_map(static function (array $c) use ($mapaTerceros): array {
         $esDuplicado = (bool) preg_match('/DUPLICADO/i', (string) ($c['estado_bot'] ?? ''));
 
         $acreditadoMacro = match ($c['estado_conc']) {
@@ -56,6 +63,18 @@ try {
             'ok'    => true,
             default => false, // revisar | no | espera | omitido: se concilió, no quedó acreditado
         };
+
+        if ($c['dni_efectivo'] !== null) {
+            // Ya se cruzó con una transferencia: se usa el dato real que decidió el sistema.
+            $dniEfectivo = (int) $c['dni_efectivo'];
+            $esTercero = (bool) $c['es_tercero'];
+        } else {
+            // Todavía sin cruzar: si el CUIL que trajo el bot ya es un pagador conocido, se
+            // resuelve igual que lo haría el cruce (Terceros::resolverPrincipal).
+            $dniOrigen = $c['dni'] !== null ? (int) $c['dni'] : null;
+            $dniEfectivo = $dniOrigen !== null ? Terceros::resolverPrincipal($dniOrigen, $mapaTerceros) : null;
+            $esTercero = $dniEfectivo !== null;
+        }
 
         return [
             'id'                => $c['msg_id'] !== null && $c['msg_id'] !== '' ? $c['msg_id'] : ('cupon-' . $c['id']),
@@ -74,6 +93,10 @@ try {
             // zero-width space), el valor se actualiza en la próxima sincronización.
             'cuil_origen'       => $c['cuit'] ?: null,
             'dni_origen'        => $c['dni'] !== null ? (int) $c['dni'] : null,
+            // Si dni_origen es el CUIL de un pagador vinculado a mano a un cliente de SAS
+            // (ver app/Terceros.php), acá se informa a quién corresponde acreditar el pago;
+            // si no, dni_cliente_sas viene null y el consumidor sigue usando dni_origen.
+            ...Normalizador::payloadTercero($dniEfectivo, $esTercero),
             'estado'            => $esDuplicado ? 'duplicado' : 'ok',
             'acreditado_macro'  => $acreditadoMacro,
         ];

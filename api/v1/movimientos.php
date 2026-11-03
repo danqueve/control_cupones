@@ -8,6 +8,7 @@ declare(strict_types=1);
 // re-matchee por su cuenta.
 
 require __DIR__ . '/../../app/bootstrap.php';
+require __DIR__ . '/../../lib/Normalizador.php';
 
 $inicio = microtime(true);
 
@@ -38,7 +39,7 @@ try {
     $st = db()->prepare("
         SELECT
             m.fecha, m.monto, m.concepto, m.referencia, m.codigo,
-            m.cuit, m.dni, m.nombre,
+            m.cuit, m.dni, m.nombre, m.dni_efectivo, m.es_tercero,
             (m.cupon_id IS NOT NULL) AS vinculado_a_cupon,
             c.estado_conc   AS cupon_estado,
             c.cobrador      AS cupon_cobrador,
@@ -63,6 +64,11 @@ try {
             'cuit'               => $m['cuit'],
             'dni'                => $m['dni'] !== null ? (int)$m['dni'] : null,
             'nombre'             => $m['nombre'],
+            // dni/nombre/cuit son quien transfirió según el banco (el dato crudo, sin tocar).
+            // Si pagó un tercero vinculado a mano a un cliente (ver app/Terceros.php), acá se
+            // informa a quién corresponde acreditar el pago; si no, dni_cliente_sas viene null
+            // y el consumidor sigue usando el "dni" de siempre.
+            ...Normalizador::payloadTercero($m['dni_efectivo'] !== null ? (int)$m['dni_efectivo'] : null, (bool)$m['es_tercero']),
             'vinculado_a_cupon'  => (bool)$m['vinculado_a_cupon'],
             'cupon_estado'       => $m['cupon_estado'],       // ok | revisar | no | espera | omitido | null
             'cupon_cobrador'     => $m['cupon_cobrador'],
