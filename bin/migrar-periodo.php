@@ -4,7 +4,7 @@
  * Migración: agrega columna `periodo` a la tabla cupones.
  *
  * Ejecutar una sola vez en el VPS:
- *   /usr/local/lsws/lsphp83/bin/php bin/migrar-periodo.php
+ *   /opt/php8-3/bin/php bin/migrar-periodo.php
  */
 declare(strict_types=1);
 

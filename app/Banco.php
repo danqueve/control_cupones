@@ -46,11 +46,11 @@ final class Banco
             $cuit = Texto::extraerCuit($concepto);
 
             // Clave estable para no cargar dos veces el mismo movimiento si se suben resúmenes superpuestos
-            $base = implode('|', [$fecha->format('Y-m-d'), $referencia, number_format($monto, 2, '.', ''), $codigo, $concepto]);
+            $base = self::baseClave($fecha, $referencia, $monto, $codigo, $concepto);
             $repetidas[$base] = ($repetidas[$base] ?? 0) + 1;
 
             $movs[] = [
-                'clave' => sha1($base . '#' . $repetidas[$base]),
+                'clave' => self::clave($base, $repetidas[$base]),
                 'fecha' => $fecha,
                 'cuit' => $cuit ?: null,
                 'dni' => $cuit ? Texto::dniDeCuit($cuit) : null,
@@ -66,6 +66,30 @@ final class Banco
             throw new RuntimeException('El archivo no tiene transferencias recibidas (créditos).');
         }
         return ['movs' => $movs, 'desde' => $desde, 'hasta' => $hasta];
+    }
+
+    /**
+     * Lo que identifica a una transferencia entre un resumen y otro.
+     *
+     * No incluye el concepto cuando hay referencia: el banco reescribe el texto
+     * de una misma transferencia entre resúmenes (primero "TRANSF  27111222333 VAR",
+     * días después "TRANSF ANA PRUEBA 27111222333 VAR VARIOS"), y con el concepto en
+     * la clave esa transferencia se cargaba dos veces. Fecha, referencia, monto y
+     * código no cambian. Sin referencia, el concepto es lo único que distingue.
+     */
+    public static function baseClave(DateTimeImmutable $fecha, string $referencia, float $monto, string $codigo, string $concepto): string
+    {
+        $partes = [$fecha->format('Y-m-d'), $referencia, number_format($monto, 2, '.', ''), $codigo];
+        if ($referencia === '') {
+            $partes[] = $concepto;
+        }
+        return implode('|', $partes);
+    }
+
+    /** @param int $repeticion n-ésima vez que aparece la misma base en un mismo archivo (desde 1) */
+    public static function clave(string $base, int $repeticion): string
+    {
+        return sha1($base . '#' . $repeticion);
     }
 
     private static function mapearEncabezado(array $filas): ?array

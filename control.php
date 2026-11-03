@@ -61,7 +61,9 @@ $filtros['todos'] = 'Todos';
 // Datos para "Descargar Excel": todo el control (no solo el filtro elegido), con una columna de estado para filtrar en Excel
 $todosCupones = Controles::items($id, 'cupon');
 $todosSinCupon = Controles::items($id, 'sin_cupon');
-$sasTodos = Sas::nombres(array_merge(array_column($todosCupones, 'dni'), array_column($todosSinCupon, 'dni')));
+$sasTodos = Sas::nombres(array_merge(array_column($todosCupones, 'dni_efectivo'), array_column($todosSinCupon, 'dni_efectivo')));
+// Igual que en pantalla: el cliente es el del dni_efectivo (si pagó un tercero, no es el del banco)
+$clienteExcel = fn(array $i): string => $i['dni_efectivo'] ? ($sasTodos[(int)$i['dni_efectivo']] ?? '') : '';
 $idsCupones = array_filter(array_column($todosCupones, 'cupon_id'));
 $enSeguimiento = [];
 if ($idsCupones) {
@@ -70,17 +72,17 @@ if ($idsCupones) {
 $hojaCupones = ['nombre' => 'Cupones', 'columnas' => [
     ['Estado', 't'], ['Titular del cupón', 't'], ['DNI', 'n'], ['Cliente SAS', 't'], ['Zona', 't'], ['Cobrador', 't'],
     ['Fecha cupón', 'f'], ['Billetera', 't'], ['N° operación', 't'], ['Monto', 'm'],
-    ['Fecha banco', 'f'], ['Nombre en el banco', 't'], ['CUIL banco', 't'], ['Detalle', 't'], ['En seguimiento', 't'],
+    ['Fecha banco', 'f'], ['Nombre en el banco', 't'], ['CUIL banco', 't'], ['Pagó un tercero', 't'], ['Detalle', 't'], ['En seguimiento', 't'],
 ], 'filas' => array_map(fn($i) => [
     $i['estado'] === 'no' ? 'No figura en el banco' : estado_info($i['estado'])['texto'],
-    $i['titular'], $i['dni'], $i['dni'] ? ($sasTodos[(int)$i['dni']] ?? '') : '', $i['zona'], $i['cobrador'],
+    $i['titular'], $i['dni'], $clienteExcel($i), $i['zona'], $i['cobrador'],
     $i['fecha_cupon'], $i['billetera'], $i['nro_operacion'], $i['monto'],
-    $i['fecha_banco'], $i['nombre_banco'], $i['cuit_banco'], $i['detalle'], isset($enSeguimiento[$i['cupon_id']]) ? 'Sí' : '',
+    $i['fecha_banco'], $i['nombre_banco'], $i['cuit_banco'], $i['es_tercero'] ? 'Sí' : '', $i['detalle'], isset($enSeguimiento[$i['cupon_id']]) ? 'Sí' : '',
 ], $todosCupones)];
 $hojaSinCupon = ['nombre' => 'Plata sin cupón', 'columnas' => [
-    ['Fecha banco', 'f'], ['Nombre en el banco', 't'], ['CUIL', 't'], ['DNI', 'n'], ['Cliente SAS', 't'], ['Monto', 'm'], ['Detalle', 't'],
+    ['Fecha banco', 'f'], ['Nombre en el banco', 't'], ['CUIL', 't'], ['DNI', 'n'], ['Cliente SAS', 't'], ['Pagó un tercero', 't'], ['Monto', 'm'], ['Detalle', 't'],
 ], 'filas' => array_map(fn($i) => [
-    $i['fecha_banco'], $i['nombre_banco'], $i['cuit_banco'], $i['dni'], $i['dni'] ? ($sasTodos[(int)$i['dni']] ?? '') : '', $i['monto'], $i['detalle'],
+    $i['fecha_banco'], $i['nombre_banco'], $i['cuit_banco'], $i['dni'], $clienteExcel($i), $i['es_tercero'] ? 'Sí' : '', $i['monto'], $i['detalle'],
 ], $todosSinCupon)];
 
 encabezado('Control #' . $id, 'control');

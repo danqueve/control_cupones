@@ -9,7 +9,10 @@ logs/*.log
 *.xlsx
 *.csv
 *.sql.gz
-sql/*dump*.sql
+# Ningún .sql en sql/ salvo el esquema: un export de la base trae DNI, CUIL y
+# nombres de clientes, y contraseñas (hasheadas) de los usuarios.
+sql/*.sql
+!sql/schema.sql
 
 .DS_Store
 Thumbs.db

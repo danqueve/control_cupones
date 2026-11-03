@@ -7,7 +7,7 @@
  * movimientos y control_items. Es seguro correrlo las veces que haga falta.
  *
  * Ejecutar en el VPS:
- *   /usr/local/lsws/lsphp83/bin/php bin/migrar-terceros.php
+ *   /opt/php8-3/bin/php bin/migrar-terceros.php
  */
 declare(strict_types=1);
 

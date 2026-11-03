@@ -118,11 +118,11 @@ chown c2881399:c2881399 app/config.php
 
 ### 7. Usuarios
 
-El PHP de consola del VPS por defecto es 5.6: usar el de PHP 8.
+El `php` de consola del VPS es 5.6 y no sirve: usar el PHP 8.3 que corre el sitio (PHP-FPM en `/opt/phpX-Y/`).
 
 ```bash
-ls /usr/local/lsws/ | grep lsphp          # ver versiones disponibles
-PHP=/usr/local/lsws/lsphp83/bin/php
+ls -d /opt/php8-*/bin/php                 # ver versiones disponibles
+PHP=/opt/php8-3/bin/php
 cd /home/c2881399/public_html/control
 $PHP bin/crear_usuario.php alejandro "Alejandro Quevedo"
 $PHP bin/crear_usuario.php usuario2 "Nombre Apellido"
@@ -147,15 +147,22 @@ cd /home/c2881399/public_html/control && git pull origin main
 Si un cambio agrega tablas, se indica en el commit y se corre (es seguro repetirlo, no toca los datos):
 
 ```bash
-/usr/local/lsws/lsphp83/bin/php bin/migrar.php
+/opt/php8-3/bin/php bin/migrar.php
 ```
+
+Las migraciones puntuales (`bin/migrar-*.php`) se corren igual, con la misma ruta de PHP.
+`bin/migrar-duplicados.php` es un simulacro si se corre solo; con `--aplicar` hace los cambios.
+
+**Nunca** dejar un export de la base dentro de la carpeta del sistema ni subirlo a GitHub: trae DNI, CUIL
+y nombres de clientes, y las contraseñas (hasheadas) de los usuarios. `sql/*.sql` está en `.gitignore`
+(salvo `schema.sql`).
 
 ## Opcional: leer la planilla cada 30 minutos (cron)
 
 No hace falta: la planilla se lee sola al subir un resumen y al buscar (si pasaron más de 15 minutos).
 
 ```
-*/30 * * * * /usr/local/lsws/lsphp83/bin/php /home/c2881399/public_html/control/bin/sincronizar.php >> /home/c2881399/control_sync.log 2>&1
+*/30 * * * * /opt/php8-3/bin/php /home/c2881399/public_html/control/bin/sincronizar.php >> /home/c2881399/control_sync.log 2>&1
 ```
 
 ## Archivos

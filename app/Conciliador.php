@@ -25,12 +25,15 @@ final class Conciliador
      *                          informa sin nombre (solo con el CUIL), para poder compararlas con el titular del cupón.
      * @param array $terceros [dni del tercero => [dni de cada cliente por el que paga]]. Deja que un cupón se cruce
      *                        con la transferencia de quien pagó en nombre del cliente (Terceros::mapaDnis()).
+     * @param array $confirmados [cuponId => movId]: cruces que una persona confirmó a mano. Se respetan antes del
+     *                           cruce por monto y fecha, pero después de los cruces fuertes (N° de operación, CUIL,
+     *                           nombre): si otro cupón reclama esa transferencia con más evidencia, gana el otro.
      * @return array [
      *   'cupones' => [cuponId => ['estado', 'detalle', 'movimiento_id']],
      *   'movs'    => [movId => cuponId],
      * ]
      */
-    public function conciliar(array $cupones, array $movs, array $nombresSas = [], array $terceros = []): array
+    public function conciliar(array $cupones, array $movs, array $nombresSas = [], array $terceros = [], array $confirmados = []): array
     {
         $resultado = [];
         $asignado = [];   // movId => cuponId
@@ -74,14 +77,30 @@ final class Conciliador
             return isset($nombresSas[$dni]) ? [(string)$nombresSas[$dni], true] : ['', false];
         };
 
-        // Cupones que no se controlan
-        foreach ($cupones as $cid => $c) {
+        // Cupones que no se controlan. Además del que marca el bot como DUPLICADO, es repetido el
+        // cupón con el mismo N° de operación, monto y fecha que otro anterior (el mismo comprobante
+        // mandado dos veces): se queda el primero, si no el segundo terminaba "no figura" o, peor,
+        // "a revisar" con la transferencia de otra persona del mismo monto.
+        $orden = $cupones;
+        ksort($orden);
+        $comprobantes = [];   // N° de operación|monto|fecha => cupón que se queda
+        foreach ($orden as $cid => $c) {
             if (preg_match('/DUPLICADO/i', (string)($c['estado_bot'] ?? ''))) {
                 $resultado[$cid] = ['estado' => 'omitido', 'detalle' => 'Cupón duplicado', 'movimiento_id' => null];
             } elseif (($c['monto'] ?? 0) <= 0) {
                 $resultado[$cid] = ['estado' => 'omitido', 'detalle' => 'Sin monto leído', 'movimiento_id' => null];
             } elseif (empty($c['fecha'])) {
                 $resultado[$cid] = ['estado' => 'omitido', 'detalle' => 'Sin fecha leída', 'movimiento_id' => null];
+            } else {
+                $op = Texto::soloAlfanumerico($c['nro_operacion'] ?? '');
+                if (strlen($op) >= 6) {
+                    $k = $op . '|' . self::claveMonto($c['monto']) . '|' . $c['fecha']->format('Y-m-d');
+                    if (isset($comprobantes[$k])) {
+                        $resultado[$cid] = ['estado' => 'omitido', 'detalle' => 'Cupón duplicado', 'movimiento_id' => null];
+                    } else {
+                        $comprobantes[$k] = $cid;
+                    }
+                }
             }
         }
         $pendientes = function () use (&$resultado, $cupones): array {
@@ -131,6 +150,16 @@ final class Conciliador
             if ($lista) {
                 $mid = $masCercano($c, $lista);
                 $asignar($cid, $mid, 'ok', $nombreMov($mid)[1] ? 'Coincide nombre (según SAS) y monto' : 'Coincide nombre y monto');
+            }
+        }
+
+        // 3b) Cruces confirmados a mano, si la transferencia sigue libre. Si un cruce fuerte de
+        //     arriba ya se la llevó para otro cupón, la confirmación no aplica: el cupón sigue de
+        //     largo y, si queda "a revisar" con otra transferencia, Controles lo avisa.
+        foreach ($pendientes() as $cid => $c) {
+            $mid = (int)($confirmados[$cid] ?? 0);
+            if ($mid && isset($movs[$mid]) && !isset($asignado[$mid])) {
+                $asignar($cid, $mid, 'ok', 'Confirmado a mano');
             }
         }
 

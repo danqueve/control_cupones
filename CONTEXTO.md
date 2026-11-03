@@ -167,7 +167,7 @@ Pasadas en orden; una transferencia se asigna a un solo cupón; en empate gana l
   Usar `/opt/lampp/bin/php` para comandos de consola.
 - **Configuración:** `app/config.php` (copiar de `config.example.php`; `chmod 640`). Nunca va a Git. Verificar siempre que
   `https://control.imperiocomercial.com.ar/app/config.php` devuelva **403**.
-- **Usuarios:** `/usr/local/lsws/lsphp83/bin/php bin/crear_usuario.php <usuario> "<Nombre Apellido>"`
+- **Usuarios:** `/opt/php8-3/bin/php bin/crear_usuario.php <usuario> "<Nombre Apellido>"`
   (el PHP de consola por defecto del VPS es 5.6; no usarlo).
 
 ## 10. Trampas conocidas del entorno

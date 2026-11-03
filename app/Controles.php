@@ -14,6 +14,17 @@ final class Controles
     {
         $banco = Banco::parsear($filas);   // valida el archivo antes de tocar nada
 
+        // Con la clave nueva (Banco::baseClave) y las filas viejas todavía con la clave
+        // anterior, el primer resumen volvería a cargar todas sus transferencias.
+        // Una base sin movimientos (instalación nueva) ya arranca con la clave nueva.
+        if (ajuste('movimientos_clave_v2') === null) {
+            if ((int)db()->query('SELECT COUNT(*) FROM movimientos')->fetchColumn() > 0) {
+                throw new RuntimeException('Antes de subir un resumen hay que actualizar la base: correr '
+                    . 'bin/migrar-duplicados.php --aplicar en el servidor.');
+            }
+            ajuste('movimientos_clave_v2', date('Y-m-d H:i:s'));
+        }
+
         $aviso = null;
         try {
             Planilla::sincronizar();
@@ -37,15 +48,21 @@ final class Controles
                 ->execute([$usuarioId, mb_substr($archivo, 0, 200), $banco['desde']->format('Y-m-d'), $banco['hasta']->format('Y-m-d'), count($banco['movs'])]);
             $controlId = (int)$pdo->lastInsertId();
 
-            // 1) Guardar transferencias nuevas (las repetidas de resúmenes anteriores se ignoran).
+            // 1) Guardar transferencias nuevas. Las que ya estaban (resúmenes superpuestos) no se
+            //    duplican; si ahora el banco las informa con nombre, se completa el que faltaba.
             //    dni_efectivo arranca igual al del banco; si pagó un tercero lo corrige aplicarTerceros().
-            $ins = $pdo->prepare('INSERT IGNORE INTO movimientos (clave, fecha, cuit, dni, dni_efectivo, nombre, monto, referencia, codigo, concepto, control_id)
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $ins = $pdo->prepare('INSERT INTO movimientos (clave, fecha, cuit, dni, dni_efectivo, nombre, monto, referencia, codigo, concepto, control_id)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  ON DUPLICATE KEY UPDATE
+                                      concepto = IF(VALUES(nombre) IS NOT NULL AND (nombre IS NULL OR nombre = \'\'), VALUES(concepto), concepto),
+                                      nombre   = IF(VALUES(nombre) IS NOT NULL AND (nombre IS NULL OR nombre = \'\'), VALUES(nombre), nombre),
+                                      cuit     = COALESCE(cuit, VALUES(cuit)),
+                                      dni      = COALESCE(dni, VALUES(dni))');
             $nuevos = 0;
             foreach ($banco['movs'] as $m) {
                 $ins->execute([$m['clave'], $m['fecha']->format('Y-m-d'), $m['cuit'], $m['dni'], $m['dni'], $m['nombre'], $m['monto'],
                     $m['referencia'], $m['codigo'], $m['concepto'], $controlId]);
-                $nuevos += $ins->rowCount();
+                $nuevos += $ins->rowCount() === 1 ? 1 : 0;   // 1 = alta; 2 = se completó una existente; 0 = sin cambios
             }
 
             // 2) Cruzar TODOS los cupones contra TODO el historial del banco
@@ -111,10 +128,17 @@ final class Controles
                 $dnisSinNombre[] = (int)$m['dni'];
             }
         }
-        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisSinNombre), Terceros::mapaDnis());
+        $confirmaciones = self::confirmaciones();
+        $confirmados = [];
+        foreach ($confirmaciones as $cuponId => $c) {
+            if ($c['movimiento_id'] !== null) {
+                $confirmados[$cuponId] = (int)$c['movimiento_id'];
+            }
+        }
+        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisSinNombre), Terceros::mapaDnis(), $confirmados);
 
         // Lo que una persona confirmó a mano se mantiene como acreditado
-        self::aplicarConfirmaciones($res);
+        self::aplicarConfirmaciones($res, $confirmaciones);
 
         $pdo->exec('UPDATE movimientos SET cupon_id = NULL');
         $upMov = $pdo->prepare('UPDATE movimientos SET cupon_id = ? WHERE id = ?');
@@ -125,6 +149,10 @@ final class Controles
         foreach ($res['cupones'] as $cuponId => $r) {
             $upCup->execute([$r['estado'], $r['detalle'], $r['movimiento_id'], $cuponId]);
         }
+        // Un cupón que sacaron de la planilla no entra al cruce: si conservara el resultado viejo, seguiría
+        // "acreditado" con una transferencia que ahora puede ser de otro cupón (y así lo vería la API).
+        $pdo->exec("UPDATE cupones SET estado_conc = 'omitido', detalle_conc = 'Ya no está en la planilla', movimiento_id = NULL
+                    WHERE en_planilla = 0");
 
         // Recién ahora, con los cupones ya cruzados, se puede saber a qué cliente
         // va cada transferencia de un tercero que paga por más de uno.
@@ -290,13 +318,29 @@ final class Controles
         return mb_substr($t, 0, 200);
     }
 
-    /** Un cupón que el cruce dejó "a revisar" y alguien ya confirmó queda acreditado. */
-    private static function aplicarConfirmaciones(array &$res): void
+    /**
+     * Una confirmación a mano vale para la transferencia que se confirmó, no para el cupón en
+     * general: si en otro cruce el cupón terminó "a revisar" con otra transferencia, se avisa en
+     * vez de darlo por acreditado con plata que no es la que alguien miró.
+     * El cruce en sí lo hace Conciliador (paso 3b); acá se pone el texto de quién y cuándo.
+     */
+    private static function aplicarConfirmaciones(array &$res, array $confirmaciones): void
     {
-        foreach (self::confirmaciones() as $cuponId => $c) {
-            if (($res['cupones'][$cuponId]['estado'] ?? '') === 'revisar') {
-                $res['cupones'][$cuponId]['estado'] = 'ok';
+        foreach ($confirmaciones as $cuponId => $c) {
+            $r = $res['cupones'][$cuponId] ?? null;
+            if (!$r) {
+                continue;
+            }
+            if ($c['movimiento_id'] === null) {
+                // Confirmación vieja sin transferencia guardada: se respeta como antes
+                if ($r['estado'] === 'revisar') {
+                    $res['cupones'][$cuponId]['estado'] = 'ok';
+                    $res['cupones'][$cuponId]['detalle'] = self::textoConfirmacion($c);
+                }
+            } elseif ($r['estado'] === 'ok' && $r['detalle'] === 'Confirmado a mano') {
                 $res['cupones'][$cuponId]['detalle'] = self::textoConfirmacion($c);
+            } elseif ($r['estado'] === 'revisar' && (int)$r['movimiento_id'] !== (int)$c['movimiento_id']) {
+                $res['cupones'][$cuponId]['detalle'] = 'Tenía una confirmación a mano, pero para otra transferencia: revisalo de nuevo';
             }
         }
     }
@@ -413,6 +457,8 @@ final class Controles
                 $fechaMov->execute([$r['movimiento_id']]);
                 $nota = 'Apareció en el banco el ' . fecha_ar((string)$fechaMov->fetchColumn()) . $origen;
                 $cerrar->execute([$nota, $cuponId]);
+            } elseif (isset($abiertos[$cuponId]) && $r['estado'] === 'omitido' && $r['detalle'] === 'Cupón duplicado') {
+                $cerrar->execute(['Cupón duplicado: es el mismo comprobante que otro cupón', $cuponId]);
             }
         }
     }

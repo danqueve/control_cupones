@@ -40,7 +40,7 @@ if ((strtotime($hasta) - strtotime($desde)) > 100 * 86400) {
 try {
     $st = db()->prepare("
         SELECT c.id, c.msg_id, c.fecha_cupon, c.hora, c.monto, c.zona, c.cobrador, c.billetera,
-               c.nro_operacion, c.titular, c.cbu_alias, c.cuit, c.dni, c.estado_bot, c.estado_conc,
+               c.nro_operacion, c.titular, c.cbu_alias, c.cuit, c.dni, c.estado_bot, c.estado_conc, c.detalle_conc,
                m.dni_efectivo, m.es_tercero
         FROM cupones c
         LEFT JOIN movimientos m ON m.id = c.movimiento_id
@@ -56,7 +56,9 @@ try {
     $mapaTerceros = Terceros::mapaActivo();
 
     $data = array_map(static function (array $c) use ($mapaTerceros): array {
-        $esDuplicado = (bool) preg_match('/DUPLICADO/i', (string) ($c['estado_bot'] ?? ''));
+        // Duplicado lo marca el bot, o lo detecta el cruce (mismo N° de operación, monto y fecha que otro cupón)
+        $esDuplicado = (bool) preg_match('/DUPLICADO/i', (string) ($c['estado_bot'] ?? ''))
+            || ($c['estado_conc'] === 'omitido' && $c['detalle_conc'] === 'Cupón duplicado');
 
         $acreditadoMacro = match ($c['estado_conc']) {
             null    => null, // todavía no se concilió contra ningún extracto
