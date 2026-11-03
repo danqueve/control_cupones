@@ -121,10 +121,15 @@ encabezado('Buscar', 'buscar');
         <?php if ($elegida && ($link = Sas::link((int)$elegida['dni']))): ?>
           <a class="boton boton-sec" href="<?= h($link) ?>" target="_blank" rel="noopener" style="min-height: 42px; font-size: 14px">Ver en SAS Imperio <?= icono('externo') ?></a>
         <?php endif; ?>
-        <?php if ($elegida && !$elegida['cliente_sas'] && $elegida['transferencias'] > 0): ?>
+        <?php
+          // Solo si hizo transferencias ella misma: $elegida['transferencias'] también cuenta las que
+          // un tercero vinculado hizo por ella, y con esas no hay nada que vincular desde su DNI.
+          $propias = $elegida ? count(array_filter($res['movs'], fn($m) => (int)$m['dni'] === (int)$elegida['dni'])) : 0;
+        ?>
+        <?php if ($propias > 0): ?>
           <a class="boton boton-sec" style="min-height: 42px; font-size: 14px"
              href="vincular_tercero.php?dni=<?= (int)$elegida['dni'] ?>&amp;volver=<?= urlencode('buscar.php?' . http_build_query(['q' => $q])) ?>">
-            Vincular como pagador de un cliente →
+            <?= $elegida['cliente_sas'] ? 'Vincular como pagador de otro cliente →' : 'Vincular como pagador de un cliente →' ?>
           </a>
         <?php endif; ?>
       </div>
