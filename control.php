@@ -31,7 +31,7 @@ $st = db()->prepare("SELECT estado, SUM(monto) FROM control_items WHERE control_
 $st->execute([$id]);
 $montos = $st->fetchAll(PDO::FETCH_KEY_PAIR);
 
-$sas = Sas::nombres(array_column($items, 'dni'));
+$sas = Sas::nombres(array_merge(array_column($items, 'dni'), array_column($items, 'dni_efectivo')));
 $pendAbiertos = [];
 if ($items && $f !== 'sin_cupon') {
     $ids = array_filter(array_column($items, 'cupon_id'));
@@ -149,13 +149,14 @@ encabezado('Control #' . $id, 'control');
           </tr>
         </thead>
         <tbody id="filas">
-          <?php foreach ($items as $it): $dni = $it['dni'] ? (int)$it['dni'] : null; ?>
+          <?php foreach ($items as $it): $dni = $it['dni'] ? (int)$it['dni'] : null; $dniEfectivo = $it['dni_efectivo'] ? (int)$it['dni_efectivo'] : null; ?>
             <?php if ($it['tipo'] === 'sin_cupon'): ?>
               <tr>
                 <td><?= etiqueta('sin_cupon') ?></td>
                 <td>
                   <?= link_persona($dni, $it['nombre_banco'] ?: 'Nombre no informado') ?>
-                  <?= cliente_sas($dni, $sas) ?>
+                  <?= cuenta_tercero((bool)$it['es_tercero']) ?>
+                  <?= cliente_sas($dniEfectivo, $sas) ?>
                 </td>
                 <td class="sub ocultar-cel">—</td>
                 <td class="sub">No mandó cupón</td>
@@ -164,14 +165,20 @@ encabezado('Control #' . $id, 'control');
                   <?php if ($it['detalle']): ?><div class="sub"><?= h($it['detalle']) ?></div><?php endif; ?>
                 </td>
                 <td class="monto-fila"><?= dinero($it['monto']) ?></td>
-                <td class="acciones"><?= $dni ? '<a href="buscar.php?q=' . $dni . '">Ver persona →</a>' : '' ?></td>
+                <td class="acciones">
+                  <?php if ($dni): ?>
+                    <div><a href="buscar.php?q=<?= $dni ?>">Ver persona →</a></div>
+                    <div><a href="vincular_tercero.php?mov=<?= (int)$it['movimiento_id'] ?>&amp;control=<?= $id ?>&amp;f=<?= h($f) ?>">Asignar a un cliente →</a></div>
+                  <?php endif; ?>
+                </td>
               </tr>
             <?php else: ?>
               <tr>
                 <td><?= etiqueta($it['estado'], $it['estado'] === 'no' ? 'No figura' : null) ?></td>
                 <td>
                   <?= link_persona($dni, $it['titular'] ?: 'Titular no leído') ?>
-                  <?= cliente_sas($dni, $sas) ?>
+                  <?= cuenta_tercero((bool)$it['es_tercero']) ?>
+                  <?= cliente_sas($dniEfectivo, $sas) ?>
                 </td>
                 <td><div><?= h($it['zona']) ?></div><div class="sub"><?= h($it['cobrador']) ?></div></td>
                 <td>

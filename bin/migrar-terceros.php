@@ -60,6 +60,18 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS pagadores_terceros (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 echo $existia ? "· Tabla pagadores_terceros ya existe.\n" : "✓ Tabla pagadores_terceros creada.\n";
 
+// 1b. Tabla de asignación puntual por transferencia
+$existiaAsig = (bool)$pdo->query("SHOW TABLES LIKE 'movimientos_cliente'")->fetchAll();
+$pdo->exec("CREATE TABLE IF NOT EXISTS movimientos_cliente (
+  movimiento_id   INT UNSIGNED NOT NULL PRIMARY KEY,
+  dni_cliente_sas INT UNSIGNED NOT NULL,
+  nota            VARCHAR(300) NULL,
+  asignado_por    VARCHAR(100) NOT NULL,
+  asignado_en     DATETIME     NOT NULL,
+  INDEX idx_movcli_cliente (dni_cliente_sas)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+echo $existiaAsig ? "· Tabla movimientos_cliente ya existe.\n" : "✓ Tabla movimientos_cliente creada.\n";
+
 // 2. Columnas nuevas
 $columna('movimientos', 'dni_efectivo', 'INT UNSIGNED NULL AFTER dni');
 $columna('movimientos', 'es_tercero', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER dni_efectivo');

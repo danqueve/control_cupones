@@ -6,21 +6,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verificar_csrf($_POST['csrf'] ?? null);
     $id = (int)($_POST['id'] ?? 0);
     $accion = $_POST['accion'] ?? '';
+    $q = array_intersect_key($_GET, ['ver' => 1, 'agrupar' => 1, 'periodo' => 1]);
+    $volverAqui = 'pendientes.php' . ($q ? '?' . http_build_query($q) : '');
+    $siguiente = $volverAqui;
+
     if ($accion === 'resolver') {
         $motivos = ['efectivo' => 'Pagó en efectivo', 'otra_cuenta' => 'Entró en otra cuenta', 'falso' => 'Cupón falso o repetido'];
-        $motivo = $motivos[$_POST['motivo'] ?? ''] ?? '';
+        $motivoClave = $_POST['motivo'] ?? '';
+        $motivo = $motivos[$motivoClave] ?? '';
         $nota = trim((string)($_POST['nota'] ?? ''));
         $texto = $motivo !== '' && $nota !== '' ? $motivo . ': ' . $nota : ($motivo ?: $nota);
         db()->prepare("UPDATE pendientes SET estado = 'resuelto', nota = ?, resuelto_en = NOW(), resuelto_por = ? WHERE id = ? AND estado = 'pendiente'")
             ->execute([$texto !== '' ? mb_substr($texto, 0, 500) : 'Resuelto a mano', $u['nombre'], $id]);
         flash('Listo, se marcó como resuelto.');
+        // "Entró en otra cuenta": en vez de volver a la lista, se pasa directo a buscar quién pagó y vincularlo
+        if ($motivoClave === 'otra_cuenta') {
+            $st = db()->prepare('SELECT cupon_id FROM pendientes WHERE id = ?');
+            $st->execute([$id]);
+            if ($cuponId = (int)$st->fetchColumn()) {
+                $siguiente = 'vincular_tercero.php?cupon=' . $cuponId . '&volver=' . urlencode($volverAqui);
+            }
+        }
     } elseif ($accion === 'reabrir') {
         db()->prepare("UPDATE pendientes SET estado = 'pendiente', resuelto_en = NULL, resuelto_por = NULL WHERE id = ?")
             ->execute([$id]);
         flash('Se volvió a poner en pendientes.');
     }
-    $q = array_intersect_key($_GET, ['ver' => 1, 'agrupar' => 1, 'periodo' => 1]);
-    header('Location: pendientes.php' . ($q ? '?' . http_build_query($q) : ''));
+    header('Location: ' . $siguiente);
     exit;
 }
 
@@ -236,6 +248,8 @@ encabezado('Pendientes', 'pendientes');
                   <label class="motivo"><input type="radio" name="motivo" value="falso"><span>Cupón falso o repetido</span></label>
                   <label class="motivo"><input type="radio" name="motivo" value="otro"><span>Otro</span></label>
                 </div>
+                <p class="chico" style="margin: 0">¿Pagó desde la cuenta de otra persona (un familiar, por ejemplo)? Elegí "Entró en otra cuenta"
+                  y al enviar vas a poder <a href="vincular_tercero.php?cupon=<?= (int)$p['cupon_id'] ?>&amp;volver=<?= urlencode($accion) ?>">buscar quién pagó y vincularlo</a>.</p>
               </fieldset>
               <label class="campo">Nota (opcional)
                 <textarea name="nota" rows="2" maxlength="450" placeholder="Ej: lo confirmó el cobrador el lunes"></textarea>

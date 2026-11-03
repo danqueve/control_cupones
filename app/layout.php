@@ -39,6 +39,7 @@ function icono(string $nombre, string $clase = 'ico'): string
         'actualizar' => '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/>',
         'descargar'  => '<path d="M12 4v11m0 0-4-4m4 4 4-4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
         'salir'      => '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/>',
+        'vinculo'    => '<path d="M9 15l6-6"/><path d="M11 6.5l1-1a3.5 3.5 0 0 1 5 5l-1 1"/><path d="M13 17.5l-1 1a3.5 3.5 0 0 1-5-5l1-1"/>',
     ];
     return '<svg class="' . h($clase) . '" viewBox="0 0 24 24" aria-hidden="true">' . ($trazos[$nombre] ?? '') . '</svg>';
 }
@@ -139,6 +140,7 @@ function encabezado(string $titulo, string $activo = ''): void
         'control' => [$ultimoId ? 'control.php?id=' . (int)$ultimoId : null, 'Último control', 'Control', 'control', 'solo-pc'],
         'pendientes' => ['pendientes.php', 'Pendientes', 'Pendientes', 'reloj', ''],
         'buscar' => ['buscar.php', 'Buscar persona', 'Buscar', 'buscar', ''],
+        'terceros' => ['terceros.php', 'Pagadores terceros', 'Terceros', 'vinculo', 'solo-pc'],
         'historial' => ['historial.php', 'Historial', 'Historial', 'lista', ''],
     ];
     ?>
@@ -238,6 +240,12 @@ function cliente_sas(?int $dni, array $nombresSas): string
     $link = Sas::link($dni);
     $texto = 'Cliente SAS: ' . h($nombresSas[$dni]);
     return '<div class="sas">' . ($link ? '<a href="' . h($link) . '" target="_blank" rel="noopener">' . $texto . '</a>' : $texto) . '</div>';
+}
+
+/** Marca un pago como hecho desde la cuenta de un tercero (no del titular). */
+function cuenta_tercero(bool $esTercero): string
+{
+    return $esTercero ? '<div class="tercero">Cuenta de tercero</div>' : '';
 }
 
 function formato_cuit(?string $cuit): string

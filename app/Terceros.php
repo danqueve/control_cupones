@@ -37,6 +37,23 @@ final class Terceros
     }
 
     /**
+     * Versión barata de recruzar(): asignar una transferencia puntual no cambia
+     * qué cupón se cruza con cuál, así que alcanza con recalcular dni_efectivo y
+     * refrescar la foto de esa transferencia, sin recorrer todo el histórico.
+     */
+    private static function refrescarMovimiento(int $movimientoId): ?string
+    {
+        try {
+            Controles::aplicarTerceros();
+            Controles::refrescarItems($movimientoId);
+            return null;
+        } catch (Throwable $e) {
+            error_log('[control_cupones] refresco tras asignar una transferencia: ' . $e->getMessage());
+            return 'La asignación quedó guardada, pero no se pudo actualizar la vista (' . $e->getMessage() . ').';
+        }
+    }
+
+    /**
      * Mapeos vigentes, agrupados por el DNI del tercero.
      * @return array<int, array<int, array>> dni_tercero => [dni_cliente_sas => fila]
      */
@@ -274,5 +291,82 @@ final class Terceros
         }
 
         return ['aviso' => self::recruzar()];
+    }
+
+    // ─── Asignación puntual de una transferencia ──────────────────────
+
+    /**
+     * Asigna UNA transferencia a un cliente SAS, sin crear un vínculo permanente
+     * con el pagador. Sirve para el caso ambiguo (un tercero que paga por varios
+     * clientes y no hay cupón que lo aclare) y para alguien que pagó una sola vez
+     * y no vale la pena vincularlo.
+     * @return array ['aviso' => ?string] o ['error' => string]
+     */
+    public static function asignarMovimiento(int $movimientoId, int $dniClienteSas, string $nota, string $usuario): array
+    {
+        if ($movimientoId <= 0 || $dniClienteSas <= 0) {
+            return ['error' => 'Faltan datos para asignar la transferencia.'];
+        }
+        if (!Sas::activo()) {
+            return ['error' => 'SAS Imperio no está disponible ahora, así que no se puede comprobar el DNI del cliente. Probá más tarde.'];
+        }
+        if (!isset(Sas::nombres([$dniClienteSas])[$dniClienteSas])) {
+            return ['error' => 'No encontré ese DNI entre los clientes de SAS Imperio.'];
+        }
+
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $st = $pdo->prepare('SELECT cupon_id FROM movimientos WHERE id = ? FOR UPDATE');
+            $st->execute([$movimientoId]);
+            $mov = $st->fetch();
+            if (!$mov) {
+                $pdo->rollBack();
+                return ['error' => 'No encontré esa transferencia.'];
+            }
+            if ($mov['cupon_id']) {
+                $pdo->rollBack();
+                return ['error' => 'Esa transferencia ya está cruzada con un cupón: ya se sabe de quién es.'];
+            }
+            $pdo->prepare('INSERT INTO movimientos_cliente (movimiento_id, dni_cliente_sas, nota, asignado_por, asignado_en)
+                           VALUES (?, ?, ?, ?, NOW())
+                           ON DUPLICATE KEY UPDATE dni_cliente_sas = VALUES(dni_cliente_sas), nota = VALUES(nota),
+                               asignado_por = VALUES(asignado_por), asignado_en = VALUES(asignado_en)')
+                ->execute([$movimientoId, $dniClienteSas, mb_substr(trim($nota), 0, 300), mb_substr($usuario, 0, 100)]);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+
+        return ['aviso' => self::refrescarMovimiento($movimientoId)];
+    }
+
+    /** @return array ['aviso' => ?string] o ['error' => string] */
+    public static function quitarAsignacionMovimiento(int $movimientoId): array
+    {
+        $st = db()->prepare('DELETE FROM movimientos_cliente WHERE movimiento_id = ?');
+        $st->execute([$movimientoId]);
+        if (!$st->rowCount()) {
+            return ['error' => 'Esa transferencia no tenía una asignación a mano.'];
+        }
+        return ['aviso' => self::refrescarMovimiento($movimientoId)];
+    }
+
+    public static function asignacion(int $movimientoId): ?array
+    {
+        $st = db()->prepare('SELECT * FROM movimientos_cliente WHERE movimiento_id = ?');
+        $st->execute([$movimientoId]);
+        return $st->fetch() ?: null;
+    }
+
+    /** @return array[] todas las asignaciones puntuales, con el contexto de la transferencia */
+    public static function asignacionesListar(): array
+    {
+        return db()->query("SELECT mc.*, m.fecha, m.monto, m.nombre AS nombre_banco, m.dni, m.cuit
+                            FROM movimientos_cliente mc JOIN movimientos m ON m.id = mc.movimiento_id
+                            ORDER BY mc.asignado_en DESC")->fetchAll();
     }
 }

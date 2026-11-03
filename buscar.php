@@ -110,15 +110,24 @@ encabezado('Buscar', 'buscar');
             <span class="mono">DNI <?= formato_dni($elegida['dni']) ?></span>
             <?php if ($elegida['cuit']): ?><span class="mono">CUIL <?= h(formato_cuit($elegida['cuit'])) ?></span><?php endif; ?>
             <?php if ($elegida['nombres']): ?><span>En el banco y los cupones figura como <strong><?= h(implode(', ', $elegida['nombres'])) ?></strong></span><?php endif; ?>
+            <?php if ($elegida['pagadores']): ?><span class="tercero">Pagan en su cuenta: <strong><?= h(implode(', ', $elegida['pagadores'])) ?></strong></span><?php endif; ?>
           </div>
         <?php else: ?>
           <h1>Resultados para “<?= h($q) ?>”</h1>
           <div class="ficha-datos"><span>Tocá una persona para ver solo lo suyo.</span></div>
         <?php endif; ?>
       </div>
-      <?php if ($elegida && ($link = Sas::link((int)$elegida['dni']))): ?>
-        <a class="boton boton-sec" href="<?= h($link) ?>" target="_blank" rel="noopener" style="min-height: 42px; font-size: 14px">Ver en SAS Imperio <?= icono('externo') ?></a>
-      <?php endif; ?>
+      <div class="fila" style="flex-wrap: nowrap">
+        <?php if ($elegida && ($link = Sas::link((int)$elegida['dni']))): ?>
+          <a class="boton boton-sec" href="<?= h($link) ?>" target="_blank" rel="noopener" style="min-height: 42px; font-size: 14px">Ver en SAS Imperio <?= icono('externo') ?></a>
+        <?php endif; ?>
+        <?php if ($elegida && !$elegida['cliente_sas'] && $elegida['transferencias'] > 0): ?>
+          <a class="boton boton-sec" style="min-height: 42px; font-size: 14px"
+             href="vincular_tercero.php?dni=<?= (int)$elegida['dni'] ?>&amp;volver=<?= urlencode('buscar.php?' . http_build_query(['q' => $q])) ?>">
+            Vincular como pagador de un cliente →
+          </a>
+        <?php endif; ?>
+      </div>
     </div>
 
     <div class="cifras">
@@ -154,6 +163,7 @@ encabezado('Buscar', 'buscar');
               <div class="lado">
                 <div><span class="mono"><?= h(fecha_ar($c['mov_fecha'])) ?></span><span class="mono" style="font-size: 15px"><?= dinero($c['mov_monto']) ?></span></div>
                 <span class="sub"><?= h(implode(' · ', array_filter([$c['mov_nombre'], $c['mov_cuit'] ? 'CUIL ' . formato_cuit($c['mov_cuit']) : null]))) ?></span>
+                <?= cuenta_tercero((bool)($c['mov_es_tercero'] ?? false)) ?>
               </div>
             <?php elseif ($estado === 'espera'): ?>
               <div class="lado-vacio">Todavía sin resumen de esa fecha</div>
@@ -176,6 +186,10 @@ encabezado('Buscar', 'buscar');
             <div class="lado">
               <div><span class="mono"><?= h(fecha_ar($m['fecha'])) ?></span><span class="mono" style="font-size: 15px"><?= dinero($m['monto']) ?></span></div>
               <span class="sub"><?= h(implode(' · ', array_filter([$m['nombre'] ?: 'Nombre no informado por el banco', $m['cuit'] ? 'CUIL ' . formato_cuit($m['cuit']) : null]))) ?></span>
+              <?= cuenta_tercero((bool)($m['es_tercero'] ?? false)) ?>
+              <?php if (!$m['cupon_id'] && (int)$m['dni'] > 0): ?>
+                <a href="vincular_tercero.php?mov=<?= (int)$m['id'] ?>&amp;volver=<?= urlencode('buscar.php?' . http_build_query(['q' => $q])) ?>" class="chico">Asignar a un cliente →</a>
+              <?php endif; ?>
             </div>
           <?php endif; ?>
         </div>

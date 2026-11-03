@@ -139,10 +139,11 @@ final class Controles
      * Calcula, para cada transferencia, el DNI del cliente al que le corresponde:
      * el del banco, o el del cliente si quien pagó es un tercero vinculado a mano.
      *
-     * Cuando un tercero paga por varios clientes se decide con el cupón con el
-     * que se cruzó la transferencia y, si no hay, con el vínculo principal. Si no
-     * alcanza ninguno de los dos, la transferencia queda a nombre del tercero
-     * para que una persona la resuelva.
+     * Escalera de precedencia, de más específico a más general:
+     *   1) el cupón con el que se cruzó la transferencia (ya resuelto antes de llamar esto);
+     *   2) una asignación a mano de esa transferencia puntual (movimientos_cliente);
+     *   3) el tercero tiene un solo vínculo vigente → ese cliente;
+     *   4) el tercero tiene varios → el marcado como principal, o nada (a resolver a mano).
      */
     public static function aplicarTerceros(): void
     {
@@ -150,37 +151,79 @@ final class Controles
         $pdo->exec('UPDATE movimientos SET dni_efectivo = dni, es_tercero = 0');
 
         $mapa = Terceros::mapaActivo();
-        if (!$mapa) {
-            return;
-        }
+        if ($mapa) {
+            // Tercero que paga por un solo cliente: no hay nada que decidir
+            $pdo->exec("UPDATE movimientos m
+                        JOIN (SELECT dni_tercero, MIN(dni_cliente_sas) AS cliente
+                                FROM pagadores_terceros WHERE activo = 1
+                                GROUP BY dni_tercero HAVING COUNT(*) = 1) u ON u.dni_tercero = m.dni
+                        SET m.dni_efectivo = u.cliente, m.es_tercero = 1
+                        WHERE m.dni IS NOT NULL");
 
-        // Tercero que paga por un solo cliente: no hay nada que decidir
-        $pdo->exec("UPDATE movimientos m
-                    JOIN (SELECT dni_tercero, MIN(dni_cliente_sas) AS cliente
-                            FROM pagadores_terceros WHERE activo = 1
-                            GROUP BY dni_tercero HAVING COUNT(*) = 1) u ON u.dni_tercero = m.dni
-                    SET m.dni_efectivo = u.cliente, m.es_tercero = 1
-                    WHERE m.dni IS NOT NULL");
-
-        $ambiguos = array_filter($mapa, fn($clientes) => count($clientes) > 1);
-        if (!$ambiguos) {
-            return;
-        }
-        $in = implode(',', array_fill(0, count($ambiguos), '?'));
-        $st = $pdo->prepare("SELECT m.id, m.dni, c.dni AS cupon_dni
-                             FROM movimientos m LEFT JOIN cupones c ON c.id = m.cupon_id
-                             WHERE m.dni IN ($in)");
-        $st->execute(array_keys($ambiguos));
-        $up = $pdo->prepare('UPDATE movimientos SET dni_efectivo = ?, es_tercero = 1 WHERE id = ?');
-        foreach ($st->fetchAll() as $m) {
-            $dniTercero = (int)$m['dni'];
-            $cuponDni = (int)($m['cupon_dni'] ?? 0);
-            $cliente = isset($ambiguos[$dniTercero][$cuponDni])
-                ? $cuponDni                                                  // lo aclara el cupón
-                : Terceros::resolverPrincipal($dniTercero, $ambiguos);       // o el vínculo principal
-            if ($cliente !== null) {
-                $up->execute([$cliente, (int)$m['id']]);
+            $ambiguos = array_filter($mapa, fn($clientes) => count($clientes) > 1);
+            if ($ambiguos) {
+                $in = implode(',', array_fill(0, count($ambiguos), '?'));
+                $st = $pdo->prepare("SELECT m.id, m.dni, c.dni AS cupon_dni
+                                     FROM movimientos m LEFT JOIN cupones c ON c.id = m.cupon_id
+                                     WHERE m.dni IN ($in)");
+                $st->execute(array_keys($ambiguos));
+                $up = $pdo->prepare('UPDATE movimientos SET dni_efectivo = ?, es_tercero = 1 WHERE id = ?');
+                foreach ($st->fetchAll() as $m) {
+                    $dniTercero = (int)$m['dni'];
+                    $cuponDni = (int)($m['cupon_dni'] ?? 0);
+                    $cliente = isset($ambiguos[$dniTercero][$cuponDni])
+                        ? $cuponDni                                                  // lo aclara el cupón
+                        : Terceros::resolverPrincipal($dniTercero, $ambiguos);       // o el vínculo principal
+                    if ($cliente !== null) {
+                        $up->execute([$cliente, (int)$m['id']]);
+                    }
+                }
             }
+        }
+
+        // Nivel 2: una persona asignó esta transferencia puntual a un cliente.
+        // Manda sobre el vínculo del tercero, pero nunca sobre un cupón ya cruzado
+        // (asignarMovimiento() ya rechaza esos casos al cargar la asignación).
+        $pdo->exec("UPDATE movimientos m
+                    JOIN movimientos_cliente a ON a.movimiento_id = m.id
+                       SET m.dni_efectivo = a.dni_cliente_sas,
+                           m.es_tercero = IF(a.dni_cliente_sas = m.dni, 0, 1)
+                     WHERE m.cupon_id IS NULL");
+    }
+
+    /**
+     * Refresca dni_efectivo/es_tercero (y el detalle de las filas "sin cupón") en
+     * la foto de los controles, sin recorrer todo el histórico. Es la versión
+     * barata de reconciliarTodo() para cuando el cruce cupón↔transferencia no
+     * cambió — solo cambió a qué cliente se le atribuye un pago ya existente.
+     *
+     * @param int|null $movimientoId limita el refresco a esa transferencia; null = todas
+     */
+    public static function refrescarItems(?int $movimientoId = null): void
+    {
+        $pdo = db();
+        $filtro = $movimientoId !== null ? ' AND ci.movimiento_id = ' . (int)$movimientoId : '';
+
+        $pdo->exec("UPDATE control_items ci JOIN movimientos m ON m.id = ci.movimiento_id
+                       SET ci.dni_efectivo = m.dni_efectivo, ci.es_tercero = m.es_tercero
+                     WHERE ci.tipo = 'cupon'$filtro");
+
+        $filas = $pdo->query("SELECT ci.id, ci.movimiento_id, m.dni, m.nombre, m.dni_efectivo, m.es_tercero
+                                 FROM control_items ci JOIN movimientos m ON m.id = ci.movimiento_id
+                                WHERE ci.tipo = 'sin_cupon'$filtro")->fetchAll();
+        if (!$filas) {
+            return;
+        }
+        $conocidos = self::nombresConocidos(array_column($filas, 'dni'));
+        $varios = array_filter(Terceros::mapaActivo(), fn($clientes) => count($clientes) > 1);
+        $up = $pdo->prepare('UPDATE control_items SET detalle = ?, dni_efectivo = ?, es_tercero = ? WHERE id = ?');
+        foreach ($filas as $f) {
+            $nombre = $f['nombre'] ?: ($conocidos[(int)$f['dni']] ?? null);
+            $detalle = $f['nombre'] ? null : ($nombre ? 'Nombre tomado de otras transferencias' : 'El banco no informa el nombre');
+            if (!(int)$f['es_tercero'] && isset($varios[(int)$f['dni']])) {
+                $detalle = 'Paga por varios clientes: elegí a cuál corresponde';
+            }
+            $up->execute([$detalle, $f['dni_efectivo'], $f['es_tercero'], $f['id']]);
         }
     }
 

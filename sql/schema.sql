@@ -176,3 +176,15 @@ CREATE TABLE IF NOT EXISTS pagadores_terceros (
   INDEX idx_terc_dni (dni_tercero, activo),
   INDEX idx_terc_cliente (dni_cliente_sas, activo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- "Esta transferencia puntual es de este cliente". Sirve cuando el pagador
+-- paga por varios clientes y no hay cupón que lo aclare, o para alguien que
+-- pagó una sola vez y no vale la pena vincularlo de forma permanente.
+CREATE TABLE IF NOT EXISTS movimientos_cliente (
+  movimiento_id   INT UNSIGNED NOT NULL PRIMARY KEY,
+  dni_cliente_sas INT UNSIGNED NOT NULL,
+  nota            VARCHAR(300) NULL,
+  asignado_por    VARCHAR(100) NOT NULL,
+  asignado_en     DATETIME     NOT NULL,
+  INDEX idx_movcli_cliente (dni_cliente_sas)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
