@@ -35,16 +35,18 @@ final class Busqueda
         $cond = [];
         $params = [];
         foreach ($variantes as $v) {
-            $cond[] = '(CAST(m.dni AS CHAR) LIKE ? OR m.cuit LIKE ?)';
-            array_push($params, "%$v%", "%$v%");
+            // dni_efectivo: buscando al cliente aparecen también los pagos que hizo un tercero por él
+            $cond[] = '(CAST(m.dni AS CHAR) LIKE ? OR m.cuit LIKE ? OR CAST(m.dni_efectivo AS CHAR) LIKE ?)';
+            array_push($params, "%$v%", "%$v%", "%$v%");
         }
         $movs = self::traerMovs(implode(' OR ', $cond), $params);
 
         $cond = [];
         $params = [];
         foreach ($variantes as $v) {
-            $cond[] = '(CAST(c.dni AS CHAR) LIKE ? OR c.cuit LIKE ? OR CAST(m.dni AS CHAR) LIKE ? OR c.nro_operacion LIKE ? OR c.cbu_alias LIKE ?)';
-            array_push($params, "%$v%", "%$v%", "%$v%", "%$v%", "%$v%");
+            $cond[] = '(CAST(c.dni AS CHAR) LIKE ? OR c.cuit LIKE ? OR CAST(m.dni AS CHAR) LIKE ?
+                        OR CAST(m.dni_efectivo AS CHAR) LIKE ? OR c.nro_operacion LIKE ? OR c.cbu_alias LIKE ?)';
+            array_push($params, "%$v%", "%$v%", "%$v%", "%$v%", "%$v%", "%$v%");
         }
         $cupones = self::traerCupones(implode(' OR ', $cond), $params);
 
@@ -68,16 +70,19 @@ final class Busqueda
         // Con los DNI encontrados, traer también lo que no tiene nombre pero sí ese CUIL
         $dnis = array_unique(array_filter(array_merge(
             array_column($movs, 'dni'),
+            array_column($movs, 'dni_efectivo'),
             array_column($cupones, 'dni'),
-            array_column($cupones, 'mov_dni')
+            array_column($cupones, 'mov_dni'),
+            array_column($cupones, 'mov_dni_efectivo')
         )));
         if ($dnis) {
             $in = implode(',', array_fill(0, count($dnis), '?'));
             $dnis = array_values(array_map('intval', $dnis));
-            foreach (self::traerMovs("m.dni IN ($in)", $dnis) as $m) {
+            foreach (self::traerMovs("m.dni IN ($in) OR m.dni_efectivo IN ($in)", array_merge($dnis, $dnis)) as $m) {
                 $movs[$m['id']] = $m;
             }
-            foreach (self::traerCupones("c.dni IN ($in) OR m.dni IN ($in)", array_merge($dnis, $dnis)) as $c) {
+            foreach (self::traerCupones("c.dni IN ($in) OR m.dni IN ($in) OR m.dni_efectivo IN ($in)",
+                array_merge($dnis, $dnis, $dnis)) as $c) {
                 $cupones[$c['id']] = $c;
             }
         }
@@ -122,6 +127,7 @@ final class Busqueda
     private static function traerCupones(string $where, array $params): array
     {
         $st = db()->prepare("SELECT c.*, m.fecha AS mov_fecha, m.monto AS mov_monto, m.dni AS mov_dni, m.cuit AS mov_cuit, m.nombre AS mov_nombre,
+                                    m.dni_efectivo AS mov_dni_efectivo, m.es_tercero AS mov_es_tercero,
                                     p.estado AS pend_estado, p.nota AS pend_nota
                              FROM cupones c
                              LEFT JOIN movimientos m ON m.id = c.movimiento_id
@@ -149,7 +155,8 @@ final class Busqueda
             if (!$dni) {
                 return;
             }
-            $p = $personas[$dni] ?? ['dni' => $dni, 'cuit' => $cuit, 'nombres' => [], 'transferencias' => 0, 'total_banco' => 0.0, 'cupones' => 0, 'sin_cupon' => 0];
+            $p = $personas[$dni] ?? ['dni' => $dni, 'cuit' => $cuit, 'nombres' => [], 'pagadores' => [],
+                'transferencias' => 0, 'total_banco' => 0.0, 'cupones' => 0, 'sin_cupon' => 0];
             if ($cuit && !$p['cuit']) {
                 $p['cuit'] = $cuit;
             }
@@ -158,19 +165,30 @@ final class Busqueda
             }
             $personas[$dni] = $p;
         };
+        // Si pagó un tercero, la plata se cuenta del lado del cliente y el nombre
+        // que informó el banco queda aparte, como quien hizo la transferencia.
         foreach ($movs as $m) {
-            $agregar($m['dni'] ? (int)$m['dni'] : null, $m['cuit'], $m['nombre']);
-            if ($m['dni']) {
-                $personas[(int)$m['dni']]['transferencias']++;
-                $personas[(int)$m['dni']]['total_banco'] += (float)$m['monto'];
-                if (!$m['cupon_id']) {
-                    $personas[(int)$m['dni']]['sin_cupon']++;
-                }
+            $esTercero = (int)($m['es_tercero'] ?? 0) === 1;
+            $dni = (int)($m['dni_efectivo'] ?: $m['dni']);
+            if (!$dni) {
+                continue;
+            }
+            $agregar($dni, $esTercero ? null : $m['cuit'], $esTercero ? null : $m['nombre']);
+            $personas[$dni]['transferencias']++;
+            $personas[$dni]['total_banco'] += (float)$m['monto'];
+            if (!$m['cupon_id']) {
+                $personas[$dni]['sin_cupon']++;
+            }
+            if ($esTercero && $m['nombre']) {
+                $personas[$dni]['pagadores'][Texto::normalizar($m['nombre'])] = $m['nombre'];
             }
         }
         foreach ($cupones as $c) {
-            $dni = $c['mov_dni'] ? (int)$c['mov_dni'] : ($c['dni'] ? (int)$c['dni'] : null);
-            $agregar($dni, $c['mov_cuit'] ?: $c['cuit'], $c['titular']);
+            $esTercero = (int)($c['mov_es_tercero'] ?? 0) === 1;
+            $dni = $esTercero && $c['mov_dni_efectivo']
+                ? (int)$c['mov_dni_efectivo']
+                : ($c['mov_dni'] ? (int)$c['mov_dni'] : ($c['dni'] ? (int)$c['dni'] : null));
+            $agregar($dni, $esTercero ? $c['cuit'] : ($c['mov_cuit'] ?: $c['cuit']), $c['titular']);
             if ($dni) {
                 $personas[$dni]['cupones']++;
             }
@@ -180,6 +198,7 @@ final class Busqueda
         foreach ($personas as $dni => &$p) {
             $p['cliente_sas'] = $sas[$dni] ?? null;
             $p['nombres'] = array_values($p['nombres']);
+            $p['pagadores'] = array_values($p['pagadores']);
         }
         unset($p);
         uasort($personas, fn($a, $b) => $b['total_banco'] <=> $a['total_banco']);

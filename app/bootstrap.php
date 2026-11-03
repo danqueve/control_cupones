@@ -19,6 +19,7 @@ require_once __DIR__ . '/Banco.php';
 require_once __DIR__ . '/Conciliador.php';
 require_once __DIR__ . '/Planilla.php';
 require_once __DIR__ . '/Sas.php';
+require_once __DIR__ . '/Terceros.php';
 require_once __DIR__ . '/Controles.php';
 require_once __DIR__ . '/Busqueda.php';
 require_once __DIR__ . '/layout.php';

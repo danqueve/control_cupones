@@ -37,63 +37,24 @@ final class Controles
                 ->execute([$usuarioId, mb_substr($archivo, 0, 200), $banco['desde']->format('Y-m-d'), $banco['hasta']->format('Y-m-d'), count($banco['movs'])]);
             $controlId = (int)$pdo->lastInsertId();
 
-            // 1) Guardar transferencias nuevas (las repetidas de resúmenes anteriores se ignoran)
-            $ins = $pdo->prepare('INSERT IGNORE INTO movimientos (clave, fecha, cuit, dni, nombre, monto, referencia, codigo, concepto, control_id)
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            // 1) Guardar transferencias nuevas (las repetidas de resúmenes anteriores se ignoran).
+            //    dni_efectivo arranca igual al del banco; si pagó un tercero lo corrige aplicarTerceros().
+            $ins = $pdo->prepare('INSERT IGNORE INTO movimientos (clave, fecha, cuit, dni, dni_efectivo, nombre, monto, referencia, codigo, concepto, control_id)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             $nuevos = 0;
             foreach ($banco['movs'] as $m) {
-                $ins->execute([$m['clave'], $m['fecha']->format('Y-m-d'), $m['cuit'], $m['dni'], $m['nombre'], $m['monto'],
+                $ins->execute([$m['clave'], $m['fecha']->format('Y-m-d'), $m['cuit'], $m['dni'], $m['dni'], $m['nombre'], $m['monto'],
                     $m['referencia'], $m['codigo'], $m['concepto'], $controlId]);
                 $nuevos += $ins->rowCount();
             }
 
             // 2) Cruzar TODOS los cupones contra TODO el historial del banco
-            $cupones = [];
-            foreach ($pdo->query('SELECT id, fecha_cupon, monto, titular, nro_operacion, estado_bot, dni FROM cupones WHERE en_planilla = 1') as $c) {
-                $c['fecha'] = $c['fecha_cupon'] ? new DateTimeImmutable($c['fecha_cupon']) : null;
-                $c['monto'] = (float)$c['monto'];
-                $cupones[(int)$c['id']] = $c;
-            }
-            $movs = [];
-            foreach ($pdo->query('SELECT id, fecha, monto, nombre, dni, referencia, concepto FROM movimientos') as $m) {
-                $m['fecha'] = new DateTimeImmutable($m['fecha']);
-                $m['monto'] = (float)$m['monto'];
-                $movs[(int)$m['id']] = $m;
-            }
+            $res = self::cruzar();
 
-            $conc = new Conciliador(
-                (int)config('tolerancia_dias', 3),
-                (int)config('tolerancia_dias_cuil', 5),
-                (int)config('dias_espera', 2)
-            );
-
-            // Transferencias que el banco informa solo con el CUIL (sin nombre): se le pregunta a SAS (solo lectura)
-            $dnisSinNombre = [];
-            foreach ($movs as $m) {
-                if (trim((string)$m['nombre']) === '' && !empty($m['dni'])) {
-                    $dnisSinNombre[] = (int)$m['dni'];
-                }
-            }
-            $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisSinNombre));
-
-            // Lo que una persona confirmó a mano se mantiene como acreditado
-            self::aplicarConfirmaciones($res);
-
-            // 3) Guardar el resultado en cada cupón y movimiento
-            $pdo->exec('UPDATE movimientos SET cupon_id = NULL');
-            $upMov = $pdo->prepare('UPDATE movimientos SET cupon_id = ? WHERE id = ?');
-            foreach ($res['movs'] as $movId => $cuponId) {
-                $upMov->execute([$cuponId, $movId]);
-            }
-            $upCup = $pdo->prepare('UPDATE cupones SET estado_conc = ?, detalle_conc = ?, movimiento_id = ? WHERE id = ?');
-            foreach ($res['cupones'] as $cuponId => $r) {
-                $upCup->execute([$r['estado'], $r['detalle'], $r['movimiento_id'], $cuponId]);
-            }
-
-            // 4) Seguimiento de cupones que no figuran en el banco
+            // 3) Seguimiento de cupones que no figuran en el banco
             self::actualizarPendientes($res['cupones'], $controlId);
 
-            // 5) Foto del resultado para el período del archivo subido
+            // 4) Foto del resultado para el período del archivo subido
             $resumen = self::guardarItems($controlId, $banco['desde'], $banco['hasta']);
 
             $pdo->prepare('UPDATE controles SET mov_nuevos = ?, total_archivo = ?, ok = ?, revisar = ?, no_figuran = ?, espera = ?,
@@ -103,6 +64,159 @@ final class Controles
 
             $pdo->commit();
             return ['id' => $controlId, 'aviso' => $aviso];
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        } finally {
+            $pdo->query("SELECT RELEASE_LOCK('control_cupones')");
+        }
+    }
+
+    // ─── Cruce de cupones contra el banco ─────────────────────────────
+
+    /**
+     * Cruza TODOS los cupones de la planilla contra TODO el historial del banco
+     * y guarda el resultado en cada cupón y movimiento.
+     * @return array el resultado del Conciliador (ver Conciliador::conciliar)
+     */
+    private static function cruzar(): array
+    {
+        $pdo = db();
+
+        $cupones = [];
+        foreach ($pdo->query('SELECT id, fecha_cupon, monto, titular, nro_operacion, estado_bot, dni FROM cupones WHERE en_planilla = 1') as $c) {
+            $c['fecha'] = $c['fecha_cupon'] ? new DateTimeImmutable($c['fecha_cupon']) : null;
+            $c['monto'] = (float)$c['monto'];
+            $cupones[(int)$c['id']] = $c;
+        }
+        $movs = [];
+        foreach ($pdo->query('SELECT id, fecha, monto, nombre, dni, referencia, concepto FROM movimientos') as $m) {
+            $m['fecha'] = new DateTimeImmutable($m['fecha']);
+            $m['monto'] = (float)$m['monto'];
+            $movs[(int)$m['id']] = $m;
+        }
+
+        $conc = new Conciliador(
+            (int)config('tolerancia_dias', 3),
+            (int)config('tolerancia_dias_cuil', 5),
+            (int)config('dias_espera', 2)
+        );
+
+        // Transferencias que el banco informa solo con el CUIL (sin nombre): se le pregunta a SAS (solo lectura)
+        $dnisSinNombre = [];
+        foreach ($movs as $m) {
+            if (trim((string)$m['nombre']) === '' && !empty($m['dni'])) {
+                $dnisSinNombre[] = (int)$m['dni'];
+            }
+        }
+        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisSinNombre), Terceros::mapaDnis());
+
+        // Lo que una persona confirmó a mano se mantiene como acreditado
+        self::aplicarConfirmaciones($res);
+
+        $pdo->exec('UPDATE movimientos SET cupon_id = NULL');
+        $upMov = $pdo->prepare('UPDATE movimientos SET cupon_id = ? WHERE id = ?');
+        foreach ($res['movs'] as $movId => $cuponId) {
+            $upMov->execute([$cuponId, $movId]);
+        }
+        $upCup = $pdo->prepare('UPDATE cupones SET estado_conc = ?, detalle_conc = ?, movimiento_id = ? WHERE id = ?');
+        foreach ($res['cupones'] as $cuponId => $r) {
+            $upCup->execute([$r['estado'], $r['detalle'], $r['movimiento_id'], $cuponId]);
+        }
+
+        // Recién ahora, con los cupones ya cruzados, se puede saber a qué cliente
+        // va cada transferencia de un tercero que paga por más de uno.
+        self::aplicarTerceros();
+
+        return $res;
+    }
+
+    // ─── Pagos hechos desde la cuenta de un tercero ───────────────────
+
+    /**
+     * Calcula, para cada transferencia, el DNI del cliente al que le corresponde:
+     * el del banco, o el del cliente si quien pagó es un tercero vinculado a mano.
+     *
+     * Cuando un tercero paga por varios clientes se decide con el cupón con el
+     * que se cruzó la transferencia y, si no hay, con el vínculo principal. Si no
+     * alcanza ninguno de los dos, la transferencia queda a nombre del tercero
+     * para que una persona la resuelva.
+     */
+    public static function aplicarTerceros(): void
+    {
+        $pdo = db();
+        $pdo->exec('UPDATE movimientos SET dni_efectivo = dni, es_tercero = 0');
+
+        $mapa = Terceros::mapaActivo();
+        if (!$mapa) {
+            return;
+        }
+
+        // Tercero que paga por un solo cliente: no hay nada que decidir
+        $pdo->exec("UPDATE movimientos m
+                    JOIN (SELECT dni_tercero, MIN(dni_cliente_sas) AS cliente
+                            FROM pagadores_terceros WHERE activo = 1
+                            GROUP BY dni_tercero HAVING COUNT(*) = 1) u ON u.dni_tercero = m.dni
+                    SET m.dni_efectivo = u.cliente, m.es_tercero = 1
+                    WHERE m.dni IS NOT NULL");
+
+        $ambiguos = array_filter($mapa, fn($clientes) => count($clientes) > 1);
+        if (!$ambiguos) {
+            return;
+        }
+        $in = implode(',', array_fill(0, count($ambiguos), '?'));
+        $st = $pdo->prepare("SELECT m.id, m.dni, c.dni AS cupon_dni
+                             FROM movimientos m LEFT JOIN cupones c ON c.id = m.cupon_id
+                             WHERE m.dni IN ($in)");
+        $st->execute(array_keys($ambiguos));
+        $up = $pdo->prepare('UPDATE movimientos SET dni_efectivo = ?, es_tercero = 1 WHERE id = ?');
+        foreach ($st->fetchAll() as $m) {
+            $dniTercero = (int)$m['dni'];
+            $cuponDni = (int)($m['cupon_dni'] ?? 0);
+            $cliente = isset($ambiguos[$dniTercero][$cuponDni])
+                ? $cuponDni                                                  // lo aclara el cupón
+                : Terceros::resolverPrincipal($dniTercero, $ambiguos);       // o el vínculo principal
+            if ($cliente !== null) {
+                $up->execute([$cliente, (int)$m['id']]);
+            }
+        }
+    }
+
+    /**
+     * Vuelve a cruzar todo y rehace la foto de cada control con los vínculos de
+     * pagadores terceros que estén cargados ahora. Se llama cada vez que alguien
+     * agrega, cambia o desactiva un vínculo, para que los pagos que ya estaban
+     * en el sistema queden del lado del cliente correcto.
+     */
+    public static function reconciliarTodo(): void
+    {
+        $pdo = db();
+        if ((int)$pdo->query("SELECT GET_LOCK('control_cupones', 60)")->fetchColumn() !== 1) {
+            throw new RuntimeException('Hay un control en curso. Probá de nuevo en un minuto.');
+        }
+        try {
+            $pdo->beginTransaction();
+
+            $res = self::cruzar();
+            self::actualizarPendientes($res['cupones'], null);
+
+            // Rehacer la foto de cada control con el resultado nuevo
+            $controles = $pdo->query('SELECT id, desde, hasta FROM controles
+                                      WHERE desde IS NOT NULL AND hasta IS NOT NULL ORDER BY id')->fetchAll();
+            $borrar = $pdo->prepare('DELETE FROM control_items WHERE control_id = ?');
+            $guardar = $pdo->prepare('UPDATE controles SET ok = ?, revisar = ?, no_figuran = ?, espera = ?,
+                                      sin_cupon = ?, total_sin_cupon = ? WHERE id = ?');
+            foreach ($controles as $c) {
+                $controlId = (int)$c['id'];
+                $borrar->execute([$controlId]);
+                $r = self::guardarItems($controlId, new DateTimeImmutable($c['desde']), new DateTimeImmutable($c['hasta']));
+                $guardar->execute([$r['ok'], $r['revisar'], $r['no'], $r['espera'],
+                    $r['sin_cupon'], $r['total_sin_cupon'], $controlId]);
+            }
+
+            $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
@@ -228,23 +342,33 @@ final class Controles
         }
     }
 
-    private static function actualizarPendientes(array $resultados, int $controlId): void
+    /** @param int|null $controlId null cuando el cruce no vino de subir un resumen */
+    private static function actualizarPendientes(array $resultados, ?int $controlId): void
     {
         $pdo = db();
         $abiertos = $pdo->query("SELECT cupon_id FROM pendientes WHERE estado = 'pendiente'")->fetchAll(PDO::FETCH_COLUMN);
         $abiertos = array_flip(array_map('intval', $abiertos));
 
         $nuevo = $pdo->prepare("INSERT IGNORE INTO pendientes (cupon_id, estado, detectado_en, control_id) VALUES (?, 'pendiente', NOW(), ?)");
+        // Un cupón que había aparecido en el banco y vuelve a no figurar (p. ej. porque
+        // se dio de baja el vínculo con un pagador tercero) vuelve al seguimiento. Lo que
+        // resolvió una persona a mano no se toca: esa decisión manda.
+        $reabrir = $pdo->prepare("UPDATE pendientes SET estado = 'pendiente', resuelto_en = NULL, resuelto_por = NULL, nota = NULL
+                                  WHERE cupon_id = ? AND estado = 'resuelto' AND resuelto_por = 'Automático'");
         $cerrar = $pdo->prepare("UPDATE pendientes SET estado = 'resuelto', resuelto_en = NOW(), resuelto_por = 'Automático',
                                  nota = ? WHERE cupon_id = ? AND estado = 'pendiente'");
         $fechaMov = $pdo->prepare('SELECT fecha FROM movimientos WHERE id = ?');
+        $origen = $controlId !== null ? ' (control #' . $controlId . ')' : ' (al vincular un pagador tercero)';
 
         foreach ($resultados as $cuponId => $r) {
             if ($r['estado'] === 'no') {
                 $nuevo->execute([$cuponId, $controlId]);
+                if (!$nuevo->rowCount()) {
+                    $reabrir->execute([$cuponId]);
+                }
             } elseif (isset($abiertos[$cuponId]) && in_array($r['estado'], ['ok', 'revisar'], true)) {
                 $fechaMov->execute([$r['movimiento_id']]);
-                $nota = 'Apareció en el banco el ' . fecha_ar((string)$fechaMov->fetchColumn()) . ' (control #' . $controlId . ')';
+                $nota = 'Apareció en el banco el ' . fecha_ar((string)$fechaMov->fetchColumn()) . $origen;
                 $cerrar->execute([$nota, $cuponId]);
             }
         }
@@ -258,28 +382,36 @@ final class Controles
 
         // Cupones del período (con el movimiento del banco con el que se cruzaron), sin los duplicados de la planilla
         $pdo->prepare("INSERT INTO control_items (control_id, tipo, estado, detalle, cupon_id, movimiento_id, zona, fecha_cupon, cobrador,
-                           titular, monto, billetera, nro_operacion, fecha_banco, nombre_banco, cuit_banco, dni)
+                           titular, monto, billetera, nro_operacion, fecha_banco, nombre_banco, cuit_banco, dni, dni_efectivo, es_tercero)
                        SELECT ?, 'cupon', COALESCE(c.estado_conc, 'omitido'), c.detalle_conc, c.id, m.id, c.zona, c.fecha_cupon, c.cobrador,
-                           c.titular, c.monto, c.billetera, c.nro_operacion, m.fecha, m.nombre, m.cuit, COALESCE(m.dni, c.dni)
+                           c.titular, c.monto, c.billetera, c.nro_operacion, m.fecha, m.nombre, m.cuit, COALESCE(m.dni, c.dni),
+                           COALESCE(m.dni_efectivo, m.dni, c.dni), COALESCE(m.es_tercero, 0)
                        FROM cupones c LEFT JOIN movimientos m ON m.id = c.movimiento_id
                        WHERE c.en_planilla = 1 AND c.fecha_cupon BETWEEN ? AND ?
                          AND (c.estado_bot IS NULL OR c.estado_bot NOT LIKE '%DUPLICADO%')")
             ->execute([$controlId, $d, $h]);
 
         // Plata que entró sin cupón (solo transferencias de personas: traen CUIL)
-        $sinCupon = $pdo->prepare('SELECT id, fecha, nombre, cuit, dni, monto FROM movimientos
+        $sinCupon = $pdo->prepare('SELECT id, fecha, nombre, cuit, dni, dni_efectivo, es_tercero, monto FROM movimientos
                                    WHERE cupon_id IS NULL AND dni IS NOT NULL AND fecha BETWEEN ? AND ?');
         $sinCupon->execute([$d, $h]);
         $lista = $sinCupon->fetchAll();
 
         $conocidos = self::nombresConocidos(array_column($lista, 'dni'));
-        $ins = $pdo->prepare("INSERT INTO control_items (control_id, tipo, estado, detalle, movimiento_id, monto, fecha_banco, nombre_banco, cuit_banco, dni)
-                              VALUES (?, 'sin_cupon', 'sin_cupon', ?, ?, ?, ?, ?, ?, ?)");
+        $varios = array_filter(Terceros::mapaActivo(), fn($clientes) => count($clientes) > 1);
+        $ins = $pdo->prepare("INSERT INTO control_items (control_id, tipo, estado, detalle, movimiento_id, monto, fecha_banco,
+                                  nombre_banco, cuit_banco, dni, dni_efectivo, es_tercero)
+                              VALUES (?, 'sin_cupon', 'sin_cupon', ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $total = 0.0;
         foreach ($lista as $m) {
             $nombre = $m['nombre'] ?: ($conocidos[(int)$m['dni']] ?? null);
             $detalle = $m['nombre'] ? null : ($nombre ? 'Nombre tomado de otras transferencias' : 'El banco no informa el nombre');
-            $ins->execute([$controlId, $detalle, $m['id'], $m['monto'], $m['fecha'], $nombre, $m['cuit'], $m['dni']]);
+            // Un tercero que paga por varios clientes y no tiene vínculo principal: hay que elegir a mano
+            if (!(int)$m['es_tercero'] && isset($varios[(int)$m['dni']])) {
+                $detalle = 'Paga por varios clientes: elegí a cuál corresponde';
+            }
+            $ins->execute([$controlId, $detalle, $m['id'], $m['monto'], $m['fecha'], $nombre, $m['cuit'],
+                $m['dni'], $m['dni_efectivo'], $m['es_tercero']]);
             $total += (float)$m['monto'];
         }
 

@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS movimientos (
   clave       CHAR(40)      NOT NULL UNIQUE,
   fecha       DATE          NOT NULL,
   cuit        VARCHAR(11)   NULL,
-  dni         INT UNSIGNED  NULL,
+  dni         INT UNSIGNED  NULL,           -- DNI de quien transfirió, según el banco (dato crudo)
+  dni_efectivo INT UNSIGNED NULL,           -- DNI del cliente al que corresponde el pago (= dni si no es de un tercero)
+  es_tercero  TINYINT(1)    NOT NULL DEFAULT 0,   -- 1 si pagó un tercero por el cliente
   nombre      VARCHAR(150)  NULL,
   monto       DECIMAL(14,2) NOT NULL,
   referencia  VARCHAR(50)   NULL,
@@ -63,6 +65,7 @@ CREATE TABLE IF NOT EXISTS movimientos (
   control_id  INT UNSIGNED  NULL,           -- control en el que se cargó por primera vez
   cupon_id    INT UNSIGNED  NULL,           -- cupón con el que se concilió (última conciliación)
   INDEX idx_mov_dni (dni),
+  INDEX idx_mov_efec (dni_efectivo),
   INDEX idx_mov_fecha (fecha),
   INDEX idx_mov_monto (monto)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -107,6 +110,8 @@ CREATE TABLE IF NOT EXISTS control_items (
   nombre_banco  VARCHAR(200)  NULL,
   cuit_banco    VARCHAR(11)   NULL,
   dni           INT UNSIGNED  NULL,
+  dni_efectivo  INT UNSIGNED  NULL,
+  es_tercero    TINYINT(1)    NOT NULL DEFAULT 0,
   INDEX idx_item_control (control_id, tipo, estado)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -147,4 +152,27 @@ CREATE TABLE IF NOT EXISTS confirmaciones (
   detalle_original VARCHAR(200) NULL,
   confirmado_por   VARCHAR(100) NOT NULL,
   confirmado_en    DATETIME     NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Clientes que pagan desde la cuenta de un tercero (familiar, representante):
+-- el CUIL que informa el banco no es el del cliente. El mapeo lo carga una
+-- persona a mano y se vuelve a aplicar en cada cruce, igual que confirmaciones.
+-- `activo` se pone en NULL al desactivar: NULL no entra en el UNIQUE, así que
+-- queda historial de mapeos viejos y a la vez un solo par activo por vez.
+CREATE TABLE IF NOT EXISTS pagadores_terceros (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  dni_tercero     INT UNSIGNED  NOT NULL,
+  cuit_tercero    VARCHAR(11)   NULL,
+  nombre_tercero  VARCHAR(200)  NULL,
+  dni_cliente_sas INT UNSIGNED  NOT NULL,
+  es_principal    TINYINT(1)    NOT NULL DEFAULT 0,
+  nota            VARCHAR(300)  NULL,
+  activo          TINYINT(1)    NULL DEFAULT 1,
+  creado_por      VARCHAR(100)  NOT NULL,
+  creado_en       DATETIME      NOT NULL,
+  desactivado_por VARCHAR(100)  NULL,
+  desactivado_en  DATETIME      NULL,
+  UNIQUE KEY uq_terc_cli_activo (dni_tercero, dni_cliente_sas, activo),
+  INDEX idx_terc_dni (dni_tercero, activo),
+  INDEX idx_terc_cliente (dni_cliente_sas, activo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

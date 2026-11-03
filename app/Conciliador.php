@@ -23,12 +23,14 @@ final class Conciliador
      * @param array $movs    [id => ['fecha' => DateTimeImmutable, 'monto', 'nombre', 'dni', 'referencia', 'concepto']]
      * @param array $nombresSas [dni => nombre del cliente en SAS]. Se usa solo para las transferencias que el banco
      *                          informa sin nombre (solo con el CUIL), para poder compararlas con el titular del cupón.
+     * @param array $terceros [dni del tercero => [dni de cada cliente por el que paga]]. Deja que un cupón se cruce
+     *                        con la transferencia de quien pagó en nombre del cliente (Terceros::mapaDnis()).
      * @return array [
      *   'cupones' => [cuponId => ['estado', 'detalle', 'movimiento_id']],
      *   'movs'    => [movId => cuponId],
      * ]
      */
-    public function conciliar(array $cupones, array $movs, array $nombresSas = []): array
+    public function conciliar(array $cupones, array $movs, array $nombresSas = [], array $terceros = []): array
     {
         $resultado = [];
         $asignado = [];   // movId => cuponId
@@ -100,14 +102,25 @@ final class Conciliador
             }
         }
 
-        // 2) Mismo DNI/CUIL y mismo monto
+        // 2) Mismo DNI/CUIL y mismo monto. Un pago hecho por un tercero cargado a mano
+        //    cuenta como del cliente: el CUIL del banco no coincide, pero el vínculo sí.
+        $mismaPersona = function (int $movDni, int $cupDni) use ($terceros): bool {
+            return $movDni === $cupDni
+                || in_array($cupDni, $terceros[$movDni] ?? [], true)   // cupón del cliente, transferencia del tercero
+                || in_array($movDni, $terceros[$cupDni] ?? [], true);  // cupón cargado con el CUIL del tercero
+        };
         foreach ($pendientes() as $cid => $c) {
             if (empty($c['dni'])) {
                 continue;
             }
-            $lista = array_values(array_filter($candidatos($c, $this->tolCuil), fn($mid) => (int)$movs[$mid]['dni'] === (int)$c['dni']));
+            $lista = array_values(array_filter($candidatos($c, $this->tolCuil),
+                fn($mid) => $mismaPersona((int)$movs[$mid]['dni'], (int)$c['dni'])));
             if ($lista) {
-                $asignar($cid, $masCercano($c, $lista), 'ok', 'Coincide CUIL y monto');
+                $mid = $masCercano($c, $lista);
+                $detalle = (int)$movs[$mid]['dni'] === (int)$c['dni']
+                    ? 'Coincide CUIL y monto'
+                    : 'Coincide monto y pagó un tercero vinculado al cliente';
+                $asignar($cid, $mid, 'ok', $detalle);
             }
         }
 
