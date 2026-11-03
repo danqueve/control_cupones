@@ -121,11 +121,12 @@ final class Controles
             (int)config('dias_espera', 2)
         );
 
-        // Transferencias que el banco informa solo con el CUIL (sin nombre): se le pregunta a SAS (solo lectura)
-        $dnisSinNombre = [];
+        // Nombre en SAS de quien transfirió (solo lectura): el cruce por nombre lo usa cuando el banco no
+        // informa el nombre o lo manda recortado
+        $dnisBanco = [];
         foreach ($movs as $m) {
-            if (trim((string)$m['nombre']) === '' && !empty($m['dni'])) {
-                $dnisSinNombre[] = (int)$m['dni'];
+            if (!empty($m['dni'])) {
+                $dnisBanco[] = (int)$m['dni'];
             }
         }
         $confirmaciones = self::confirmaciones();
@@ -135,7 +136,7 @@ final class Controles
                 $confirmados[$cuponId] = (int)$c['movimiento_id'];
             }
         }
-        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisSinNombre), Terceros::mapaDnis(), $confirmados);
+        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisBanco), Terceros::mapaDnis(), $confirmados);
 
         // Lo que una persona confirmó a mano se mantiene como acreditado
         self::aplicarConfirmaciones($res, $confirmaciones);

@@ -21,8 +21,8 @@ final class Conciliador
     /**
      * @param array $cupones [id => ['fecha' => ?DateTimeImmutable, 'monto', 'titular', 'nro_operacion', 'estado_bot', 'dni']]
      * @param array $movs    [id => ['fecha' => DateTimeImmutable, 'monto', 'nombre', 'dni', 'referencia', 'concepto']]
-     * @param array $nombresSas [dni => nombre del cliente en SAS]. Se usa solo para las transferencias que el banco
-     *                          informa sin nombre (solo con el CUIL), para poder compararlas con el titular del cupón.
+     * @param array $nombresSas [dni => nombre del cliente en SAS]. En el cruce por nombre se prueba con el nombre que
+     *                          informa el banco y, si no coincide (o el banco no lo informa), con el de SAS para ese CUIL.
      * @param array $terceros [dni del tercero => [dni de cada cliente por el que paga]]. Deja que un cupón se cruce
      *                        con la transferencia de quien pagó en nombre del cliente (Terceros::mapaDnis()).
      * @param array $confirmados [cuponId => movId]: cruces que una persona confirmó a mano. Se respetan antes del
@@ -67,14 +67,17 @@ final class Conciliador
             $resultado[$cid] = ['estado' => $estado, 'detalle' => $detalle, 'movimiento_id' => $mid];
         };
 
-        // Nombre con el que se compara cada transferencia: el del banco o, si no vino, el de SAS (según el DNI)
-        $nombreMov = function (int $mid) use ($movs, $nombresSas): array {
-            $banco = trim((string)($movs[$mid]['nombre'] ?? ''));
-            if ($banco !== '') {
-                return [$banco, false];
+        // ¿El titular del cupón coincide con quien transfirió? Primero con el nombre del banco y, si no,
+        // con el de SAS para ese CUIL: el banco suele mandar el nombre recortado o en otro orden
+        // ("SILVA/ALI", "PEREZ,JUAN M") y con eso solo un pago bueno quedaba "a revisar".
+        // Devuelve 'banco', 'sas' o null.
+        $coincideNombre = function (array $c, int $mid) use ($movs, $nombresSas): ?string {
+            $titular = (string)($c['titular'] ?? '');
+            if (Texto::nombresCoinciden($titular, (string)($movs[$mid]['nombre'] ?? ''))) {
+                return 'banco';
             }
             $dni = (int)($movs[$mid]['dni'] ?? 0);
-            return isset($nombresSas[$dni]) ? [(string)$nombresSas[$dni], true] : ['', false];
+            return isset($nombresSas[$dni]) && Texto::nombresCoinciden($titular, (string)$nombresSas[$dni]) ? 'sas' : null;
         };
 
         // Cupones que no se controlan. Además del que marca el bot como DUPLICADO, es repetido el
@@ -143,13 +146,12 @@ final class Conciliador
             }
         }
 
-        // 3) Mismo nombre y mismo monto (el nombre puede venir del banco o, si el banco no lo informó, de SAS)
+        // 3) Mismo nombre y mismo monto (el del banco o el de SAS para ese CUIL)
         foreach ($pendientes() as $cid => $c) {
-            $lista = array_values(array_filter($candidatos($c, $this->tolDias), fn($mid) =>
-                Texto::nombresCoinciden($c['titular'] ?? '', $nombreMov($mid)[0])));
+            $lista = array_values(array_filter($candidatos($c, $this->tolDias), fn($mid) => $coincideNombre($c, $mid) !== null));
             if ($lista) {
                 $mid = $masCercano($c, $lista);
-                $asignar($cid, $mid, 'ok', $nombreMov($mid)[1] ? 'Coincide nombre (según SAS) y monto' : 'Coincide nombre y monto');
+                $asignar($cid, $mid, 'ok', $coincideNombre($c, $mid) === 'sas' ? 'Coincide nombre (según SAS) y monto' : 'Coincide nombre y monto');
             }
         }
 

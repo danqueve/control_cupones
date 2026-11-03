@@ -2,8 +2,8 @@
 // ============================================================
 // scripts/test_duplicados.php
 // ------------------------------------------------------------
-// Casos de transferencias y cupones repetidos, y de confirmaciones
-// a mano atadas a su transferencia.
+// Casos de transferencias y cupones repetidos, de confirmaciones
+// a mano atadas a su transferencia, y del cruce por nombre (banco o SAS).
 //
 // ESTE SCRIPT NO TOCA LA BASE — usa Banco::parsear() y el Conciliador
 // con arrays, igual que test_normalizador.php y test_terceros.php.
@@ -109,6 +109,24 @@ chequear('un cruce por CUIL le gana a una confirmación a mano',
     ($r[2]['estado'] ?? '') === 'ok' && ($r[2]['movimiento_id'] ?? 0) === 90, json_encode($r[2] ?? null));
 chequear('el cupón confirmado no queda acreditado con plata de otro',
     !(($r[1]['estado'] ?? '') === 'ok' && ($r[1]['movimiento_id'] ?? 0) === 90), json_encode($r[1] ?? null));
+
+echo PHP_EOL . "=== Cruce por nombre: banco o SAS ===" . PHP_EOL . PHP_EOL;
+
+$sas = [33444555 => 'RAMOS, LUCIA BELEN'];
+$cupones = [1 => $cupon(['titular' => 'Lucia Belen Ramos'])];
+
+// El banco manda el nombre recortado de una forma que no coincide; el de SAS para ese CUIL sí
+$r = $conc->conciliar($cupones, [90 => $mov(['nombre' => 'RAMIREZ LU', 'dni' => 33444555])], $sas)['cupones'];
+chequear('nombre del banco recortado pero el de SAS coincide → acreditado',
+    ($r[1]['estado'] ?? '') === 'ok' && ($r[1]['detalle'] ?? '') === 'Coincide nombre (según SAS) y monto', json_encode($r[1] ?? null));
+
+// El nombre del banco coincide: sigue igual que antes
+$r = $conc->conciliar($cupones, [90 => $mov(['nombre' => 'LUCIA BELEN RAMO', 'dni' => 33444555])], $sas)['cupones'];
+chequear('si coincide el nombre del banco, se usa ese', ($r[1]['detalle'] ?? '') === 'Coincide nombre y monto', json_encode($r[1] ?? null));
+
+// El CUIL es de otra persona en SAS: no alcanza para acreditar
+$r = $conc->conciliar($cupones, [90 => $mov(['nombre' => 'RAMIREZ LU', 'dni' => 99888777])], [99888777 => 'GOMEZ, PEDRO'])['cupones'];
+chequear('si el de SAS es otra persona, no se acredita (queda a revisar)', ($r[1]['estado'] ?? '') === 'revisar', json_encode($r[1] ?? null));
 
 echo PHP_EOL . ($fallos === 0 ? "=== Todos los casos OK ===" : "=== {$fallos} caso(s) FALLARON — revisar arriba ===") . PHP_EOL;
 exit($fallos === 0 ? 0 : 1);
