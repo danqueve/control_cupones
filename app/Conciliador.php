@@ -28,12 +28,14 @@ final class Conciliador
      * @param array $confirmados [cuponId => movId]: cruces que una persona confirmó a mano. Se respetan antes del
      *                           cruce por monto y fecha, pero después de los cruces fuertes (N° de operación, CUIL,
      *                           nombre): si otro cupón reclama esa transferencia con más evidencia, gana el otro.
+     * @param array $descartados [cuponId => [movId => true]]: pares que una persona marcó como "no es el mismo pago".
+     *                           Nunca se cruzan, en ningún paso.
      * @return array [
      *   'cupones' => [cuponId => ['estado', 'detalle', 'movimiento_id']],
      *   'movs'    => [movId => cuponId],
      * ]
      */
-    public function conciliar(array $cupones, array $movs, array $nombresSas = [], array $terceros = [], array $confirmados = []): array
+    public function conciliar(array $cupones, array $movs, array $nombresSas = [], array $terceros = [], array $confirmados = [], array $descartados = []): array
     {
         $resultado = [];
         $asignado = [];   // movId => cuponId
@@ -49,10 +51,13 @@ final class Conciliador
             $conceptoAlfa[$mid] = Texto::soloAlfanumerico($m['concepto'] ?? '');
         }
 
-        $candidatos = function (array $c, int $tol) use (&$asignado, $porMonto, $movs): array {
+        // Transferencias libres del mismo monto y dentro del margen de días, salvo las que una persona
+        // descartó para ese cupón ("no es el mismo pago"): esas no se vuelven a ofrecer en ningún paso.
+        $candidatos = function ($cid, array $c, int $tol) use (&$asignado, $porMonto, $movs, $descartados): array {
             $lista = [];
             foreach ($porMonto[self::claveMonto($c['monto'])] ?? [] as $mid) {
-                if (!isset($asignado[$mid]) && abs(Texto::dias($movs[$mid]['fecha'], $c['fecha'])) <= $tol) {
+                if (!isset($asignado[$mid]) && !isset($descartados[$cid][$mid])
+                    && abs(Texto::dias($movs[$mid]['fecha'], $c['fecha'])) <= $tol) {
                     $lista[] = $mid;
                 }
             }
@@ -116,7 +121,7 @@ final class Conciliador
             if (strlen($op) < 6) {
                 continue;
             }
-            $lista = array_values(array_filter($candidatos($c, $this->tolCuil), fn($mid) =>
+            $lista = array_values(array_filter($candidatos($cid, $c, $this->tolCuil), fn($mid) =>
                 str_contains($conceptoAlfa[$mid], $op)
                 || (($movs[$mid]['referencia'] ?? '') !== '' && Texto::soloAlfanumerico($movs[$mid]['referencia']) === $op)));
             if ($lista) {
@@ -135,7 +140,7 @@ final class Conciliador
             if (empty($c['dni'])) {
                 continue;
             }
-            $lista = array_values(array_filter($candidatos($c, $this->tolCuil),
+            $lista = array_values(array_filter($candidatos($cid, $c, $this->tolCuil),
                 fn($mid) => $mismaPersona((int)$movs[$mid]['dni'], (int)$c['dni'])));
             if ($lista) {
                 $mid = $masCercano($c, $lista);
@@ -148,7 +153,7 @@ final class Conciliador
 
         // 3) Mismo nombre y mismo monto (el del banco o el de SAS para ese CUIL)
         foreach ($pendientes() as $cid => $c) {
-            $lista = array_values(array_filter($candidatos($c, $this->tolDias), fn($mid) => $coincideNombre($c, $mid) !== null));
+            $lista = array_values(array_filter($candidatos($cid, $c, $this->tolDias), fn($mid) => $coincideNombre($c, $mid) !== null));
             if ($lista) {
                 $mid = $masCercano($c, $lista);
                 $asignar($cid, $mid, 'ok', $coincideNombre($c, $mid) === 'sas' ? 'Coincide nombre (según SAS) y monto' : 'Coincide nombre y monto');
@@ -160,7 +165,7 @@ final class Conciliador
         //     largo y, si queda "a revisar" con otra transferencia, Controles lo avisa.
         foreach ($pendientes() as $cid => $c) {
             $mid = (int)($confirmados[$cid] ?? 0);
-            if ($mid && isset($movs[$mid]) && !isset($asignado[$mid])) {
+            if ($mid && isset($movs[$mid]) && !isset($asignado[$mid]) && !isset($descartados[$cid][$mid])) {
                 $asignar($cid, $mid, 'ok', 'Confirmado a mano');
             }
         }
@@ -168,12 +173,12 @@ final class Conciliador
         // 4) Solo monto y fecha → a revisar (primero los casos sin ambigüedad)
         $orden = [];
         foreach ($pendientes() as $cid => $c) {
-            $orden[$cid] = count($candidatos($c, $this->tolDias));
+            $orden[$cid] = count($candidatos($cid, $c, $this->tolDias));
         }
         asort($orden);
         foreach (array_keys($orden) as $cid) {
             $c = $cupones[$cid];
-            $lista = $candidatos($c, $this->tolDias);
+            $lista = $candidatos($cid, $c, $this->tolDias);
             if (count($lista) === 1) {
                 $asignar($cid, $lista[0], 'revisar', 'Coincide monto y fecha, pero no el nombre');
             } elseif (count($lista) > 1) {

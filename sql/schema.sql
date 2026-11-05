@@ -188,3 +188,17 @@ CREATE TABLE IF NOT EXISTS movimientos_cliente (
   asignado_en     DATETIME     NOT NULL,
   INDEX idx_movcli_cliente (dni_cliente_sas)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- "Esta transferencia NO es de este cupón". El cruce por monto y fecha le ofrece a un
+-- cupón cualquier transferencia libre del mismo monto, aunque sea de otro cliente; con
+-- esto una persona lo descarta y no se le vuelve a ofrecer en los próximos cruces.
+CREATE TABLE IF NOT EXISTS cruces_descartados (
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  cupon_id       INT UNSIGNED NOT NULL,
+  movimiento_id  INT UNSIGNED NOT NULL,
+  nota           VARCHAR(300) NULL,
+  descartado_por VARCHAR(100) NOT NULL,
+  descartado_en  DATETIME     NOT NULL,
+  UNIQUE KEY uq_descarte (cupon_id, movimiento_id),
+  INDEX idx_descarte_mov (movimiento_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

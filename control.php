@@ -31,7 +31,7 @@ $st = db()->prepare("SELECT estado, SUM(monto) FROM control_items WHERE control_
 $st->execute([$id]);
 $montos = $st->fetchAll(PDO::FETCH_KEY_PAIR);
 
-$sas = Sas::nombres(array_merge(array_column($items, 'dni'), array_column($items, 'dni_efectivo')));
+$sas = Sas::nombres(array_merge(array_column($items, 'dni'), array_column($items, 'dni_efectivo'), array_column($items, 'cupon_dni')));
 $pendAbiertos = [];
 if ($items && $f !== 'sin_cupon') {
     $ids = array_filter(array_column($items, 'cupon_id'));
@@ -42,6 +42,7 @@ if ($items && $f !== 'sin_cupon') {
 }
 
 $confirmados = Controles::confirmaciones(array_filter(array_column($items, 'cupon_id')));
+$descartes = Controles::descartes(array_filter(array_column($items, 'cupon_id')));
 $irConfirmar = fn($it) => 'confirmar.php?cupon=' . (int)$it['cupon_id'] . '&amp;control=' . $id . '&amp;f=' . urlencode($f);
 
 $cuadro = function (string $estado, string $rotulo, int $cantidad, string $filtro) use ($montos, $f, $id) {
@@ -61,9 +62,15 @@ $filtros['todos'] = 'Todos';
 // Datos para "Descargar Excel": todo el control (no solo el filtro elegido), con una columna de estado para filtrar en Excel
 $todosCupones = Controles::items($id, 'cupon');
 $todosSinCupon = Controles::items($id, 'sin_cupon');
-$sasTodos = Sas::nombres(array_merge(array_column($todosCupones, 'dni_efectivo'), array_column($todosSinCupon, 'dni_efectivo')));
-// Igual que en pantalla: el cliente es el del dni_efectivo (si pagó un tercero, no es el del banco)
-$clienteExcel = fn(array $i): string => $i['dni_efectivo'] ? ($sasTodos[(int)$i['dni_efectivo']] ?? '') : '';
+$sasTodos = Sas::nombres(array_merge(array_column($todosCupones, 'dni_efectivo'), array_column($todosCupones, 'cupon_dni'), array_column($todosSinCupon, 'dni_efectivo')));
+// Igual que en pantalla: en un cruce provisorio ("a revisar") el DNI y el cliente son los del propio cupón;
+// en el resto, el cliente es el del dni_efectivo (si pagó un tercero, no es el del banco)
+$esProvisorio = fn(array $i): bool => $i['tipo'] === 'cupon' && $i['estado'] === 'revisar';
+$dniExcel = fn(array $i) => $esProvisorio($i) ? $i['cupon_dni'] : $i['dni'];
+$clienteExcel = function (array $i) use ($sasTodos, $esProvisorio): string {
+    $d = $esProvisorio($i) ? $i['cupon_dni'] : $i['dni_efectivo'];
+    return $d ? ($sasTodos[(int)$d] ?? '') : '';
+};
 $idsCupones = array_filter(array_column($todosCupones, 'cupon_id'));
 $enSeguimiento = [];
 if ($idsCupones) {
@@ -75,7 +82,7 @@ $hojaCupones = ['nombre' => 'Cupones', 'columnas' => [
     ['Fecha banco', 'f'], ['Nombre en el banco', 't'], ['CUIL banco', 't'], ['Pagó un tercero', 't'], ['Detalle', 't'], ['En seguimiento', 't'],
 ], 'filas' => array_map(fn($i) => [
     $i['estado'] === 'no' ? 'No figura en el banco' : estado_info($i['estado'])['texto'],
-    $i['titular'], $i['dni'], $clienteExcel($i), $i['zona'], $i['cobrador'],
+    $i['titular'], $dniExcel($i), $clienteExcel($i), $i['zona'], $i['cobrador'],
     $i['fecha_cupon'], $i['billetera'], $i['nro_operacion'], $i['monto'],
     $i['fecha_banco'], $i['nombre_banco'], $i['cuit_banco'], $i['es_tercero'] ? 'Sí' : '', $i['detalle'], isset($enSeguimiento[$i['cupon_id']]) ? 'Sí' : '',
 ], $todosCupones)];
@@ -151,7 +158,11 @@ encabezado('Control #' . $id, 'control');
           </tr>
         </thead>
         <tbody id="filas">
-          <?php foreach ($items as $it): $dni = $it['dni'] ? (int)$it['dni'] : null; $dniEfectivo = $it['dni_efectivo'] ? (int)$it['dni_efectivo'] : null; ?>
+          <?php foreach ($items as $it): $dni = $it['dni'] ? (int)$it['dni'] : null; $dniEfectivo = $it['dni_efectivo'] ? (int)$it['dni_efectivo'] : null;
+              // "A revisar" es un cruce provisorio (solo coinciden monto y fecha): el cupón y quien transfirió pueden ser
+              // personas distintas, así que cada uno muestra lo suyo. Dni = DNI de la transferencia; cupon_dni = el del cupón.
+              $dniCupon = !empty($it['cupon_dni']) ? (int)$it['cupon_dni'] : null;
+              $provisorio = $it['tipo'] === 'cupon' && $it['estado'] === 'revisar'; ?>
             <?php if ($it['tipo'] === 'sin_cupon'): ?>
               <tr>
                 <td><?= etiqueta('sin_cupon') ?></td>
@@ -178,9 +189,14 @@ encabezado('Control #' . $id, 'control');
               <tr>
                 <td><?= etiqueta($it['estado'], $it['estado'] === 'no' ? 'No figura' : null) ?></td>
                 <td>
-                  <?= link_persona($dni, $it['titular'] ?: 'Titular no leído') ?>
-                  <?= cuenta_tercero((bool)$it['es_tercero']) ?>
-                  <?= cliente_sas($dniEfectivo, $sas) ?>
+                  <?php if ($provisorio): ?>
+                    <?= link_persona($dniCupon, $it['titular'] ?: 'Titular no leído') ?>
+                    <?= cliente_sas($dniCupon, $sas) ?>
+                  <?php else: ?>
+                    <?= link_persona($dni, $it['titular'] ?: 'Titular no leído') ?>
+                    <?= cuenta_tercero((bool)$it['es_tercero']) ?>
+                    <?= cliente_sas($dniEfectivo, $sas) ?>
+                  <?php endif; ?>
                 </td>
                 <td><div><?= h($it['zona']) ?></div><div class="sub"><?= h($it['cobrador']) ?></div></td>
                 <td>
@@ -189,7 +205,13 @@ encabezado('Control #' . $id, 'control');
                   <?php if ($it['nro_operacion']): ?><div class="mono sub" style="font-size: 12px">N° <?= h($it['nro_operacion']) ?></div><?php endif; ?>
                 </td>
                 <td style="max-width: 280px">
-                  <?php if ($it['fecha_banco']): ?>
+                  <?php if ($it['fecha_banco'] && $provisorio): ?>
+                    <div class="mono" style="font-size: 13px"><?= h(fecha_ar($it['fecha_banco'])) ?></div>
+                    <div><?= link_persona($dni, $it['nombre_banco'] ?: 'Nombre no informado') ?></div>
+                    <?php if ($it['cuit_banco']): ?><div class="mono sub" style="font-size: 12px">CUIL <?= h(formato_cuit($it['cuit_banco'])) ?></div><?php endif; ?>
+                    <?= cuenta_tercero((bool)$it['es_tercero']) ?>
+                    <?= cliente_sas($it['es_tercero'] ? $dniEfectivo : $dni, $sas) ?>
+                  <?php elseif ($it['fecha_banco']): ?>
                     <div><span class="mono" style="font-size: 13px"><?= h(fecha_ar($it['fecha_banco'])) ?></span><?= $it['nombre_banco'] ? ' · ' . h($it['nombre_banco']) : '' ?></div>
                     <?php if ($it['cuit_banco']): ?><div class="mono sub" style="font-size: 12px">CUIL <?= h(formato_cuit($it['cuit_banco'])) ?></div><?php endif; ?>
                   <?php elseif ($it['estado'] === 'no'): ?>
@@ -201,8 +223,9 @@ encabezado('Control #' . $id, 'control');
                 <td class="acciones">
                   <?php if ($it['estado'] === 'revisar'): ?><a class="accion-confirmar" href="<?= $irConfirmar($it) ?>">Confirmar →</a><?php endif; ?>
                   <?php if (isset($confirmados[$it['cupon_id']])): ?><a href="<?= $irConfirmar($it) ?>">Ver confirmación →</a><?php endif; ?>
+                  <?php if (isset($descartes[$it['cupon_id']]) && !$provisorio): ?><div><a href="<?= $irConfirmar($it) ?>">Cruces descartados →</a></div><?php endif; ?>
                   <?php if (isset($pendAbiertos[$it['cupon_id']])): ?><a href="pendientes.php">En seguimiento →</a>
-                  <?php elseif ($dni): ?><div><a href="buscar.php?q=<?= $dni ?>">Ver persona →</a></div><?php endif; ?>
+                  <?php elseif ($provisorio ? $dniCupon : $dni): ?><div><a href="buscar.php?q=<?= $provisorio ? $dniCupon : $dni ?>">Ver persona →</a></div><?php endif; ?>
                 </td>
               </tr>
             <?php endif; ?>

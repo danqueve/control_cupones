@@ -136,7 +136,11 @@ final class Controles
                 $confirmados[$cuponId] = (int)$c['movimiento_id'];
             }
         }
-        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisBanco), Terceros::mapaDnis(), $confirmados);
+        $descartados = [];
+        foreach ($pdo->query('SELECT cupon_id, movimiento_id FROM cruces_descartados') as $d) {
+            $descartados[(int)$d['cupon_id']][(int)$d['movimiento_id']] = true;
+        }
+        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisBanco), Terceros::mapaDnis(), $confirmados, $descartados);
 
         // Lo que una persona confirmó a mano se mantiene como acreditado
         self::aplicarConfirmaciones($res, $confirmaciones);
@@ -374,6 +378,8 @@ final class Controles
                                detalle_original = VALUES(detalle_original), confirmado_por = VALUES(confirmado_por),
                                confirmado_en = VALUES(confirmado_en)')
                 ->execute([$cuponId, $c['movimiento_id'], $conf['nota'], $c['detalle_conc'], $conf['confirmado_por'], $conf['confirmado_en']]);
+            // Confirmar y descartar el mismo par no pueden convivir: la última decisión es la que vale
+            $pdo->prepare('DELETE FROM cruces_descartados WHERE cupon_id = ? AND movimiento_id = ?')->execute([$cuponId, $c['movimiento_id']]);
             $detalle = self::textoConfirmacion($conf);
             self::cambiarEstado($cuponId, 'revisar', 'ok', $detalle);
             $pdo->commit();
@@ -408,6 +414,93 @@ final class Controles
                 $pdo->rollBack();
             }
             throw $e;
+        }
+    }
+
+    // ─── "No es el mismo pago" ────────────────────────────────────────
+
+    /**
+     * Cruces descartados a mano, con los datos de la transferencia para mostrarlos.
+     * @return array<int, array[]> cupon_id => filas (la más reciente primero)
+     */
+    public static function descartes(?array $cuponIds = null): array
+    {
+        $filas = db()->query('SELECT d.*, m.fecha, m.monto, m.nombre, m.cuit, m.dni
+                              FROM cruces_descartados d LEFT JOIN movimientos m ON m.id = d.movimiento_id
+                              ORDER BY d.id DESC')->fetchAll();
+        $mapa = [];
+        foreach ($filas as $f) {
+            $mapa[(int)$f['cupon_id']][] = $f;
+        }
+        return $cuponIds === null ? $mapa : array_intersect_key($mapa, array_flip(array_map('intval', $cuponIds)));
+    }
+
+    /**
+     * La transferencia con la que un cupón quedó "a revisar" NO es de ese cupón (por ejemplo, la hizo otro
+     * cliente que pagó el mismo monto). Ese par no se vuelve a ofrecer: el cupón pasa a "no figura" o "en
+     * espera" y la transferencia queda libre para el cupón al que sí corresponde.
+     * @return array ['aviso' => ?string] o ['error' => string]
+     */
+    public static function descartarCruce(int $cuponId, string $nota, string $usuario): array
+    {
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $st = $pdo->prepare('SELECT estado_conc, movimiento_id FROM cupones WHERE id = ? FOR UPDATE');
+            $st->execute([$cuponId]);
+            $c = $st->fetch();
+            if (!$c) {
+                $pdo->rollBack();
+                return ['error' => 'No encontré ese cupón.'];
+            }
+            if ($c['estado_conc'] !== 'revisar' || $c['movimiento_id'] === null) {
+                $pdo->rollBack();
+                return ['error' => 'Ese cupón ya no está "a revisar".'];
+            }
+            $pdo->prepare('INSERT INTO cruces_descartados (cupon_id, movimiento_id, nota, descartado_por, descartado_en)
+                           VALUES (?, ?, ?, ?, NOW())
+                           ON DUPLICATE KEY UPDATE nota = VALUES(nota), descartado_por = VALUES(descartado_por),
+                               descartado_en = VALUES(descartado_en)')
+                ->execute([$cuponId, $c['movimiento_id'], mb_substr(trim($nota), 0, 300), mb_substr($usuario, 0, 100)]);
+            // Si alguien lo había confirmado, la decisión nueva pisa a la vieja
+            $pdo->prepare('DELETE FROM confirmaciones WHERE cupon_id = ? AND movimiento_id = ?')->execute([$cuponId, $c['movimiento_id']]);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+        return ['aviso' => self::recruzarConAviso('El descarte quedó guardado')];
+    }
+
+    /**
+     * Vuelve a permitir un cruce que se había descartado.
+     * @return array ['aviso' => ?string] o ['error' => string]
+     */
+    public static function permitirCruce(int $cuponId, int $movimientoId): array
+    {
+        $st = db()->prepare('DELETE FROM cruces_descartados WHERE cupon_id = ? AND movimiento_id = ?');
+        $st->execute([$cuponId, $movimientoId]);
+        if (!$st->rowCount()) {
+            return ['error' => 'Ese descarte ya no estaba.'];
+        }
+        return ['aviso' => self::recruzarConAviso('Se volvió a permitir ese cruce')];
+    }
+
+    /**
+     * Recruza todo para que el cambio se vea en los controles. Si justo hay un control en curso no se puede
+     * tomar el lock: lo que se guardó queda igual, se avisa y se aplica en el próximo cruce.
+     */
+    private static function recruzarConAviso(string $queQuedo): ?string
+    {
+        try {
+            self::reconciliarTodo();
+            return null;
+        } catch (Throwable $e) {
+            error_log('[control_cupones] recruce tras cambiar un cruce: ' . $e->getMessage());
+            return $queQuedo . ', pero no se pudieron recalcular los pagos ya cargados (' . $e->getMessage()
+                . ') Se va a aplicar solo en el próximo control.';
         }
     }
 
@@ -557,14 +650,16 @@ final class Controles
 
     public static function items(int $controlId, string $tipo, ?string $estado = null): array
     {
-        // Los controles anteriores pueden tener guardados cupones duplicados: no se muestran
-        $sql = "SELECT * FROM control_items WHERE control_id = ? AND tipo = ? AND (detalle IS NULL OR detalle <> 'Cupón duplicado')";
+        // Los controles anteriores pueden tener guardados cupones duplicados: no se muestran.
+        // cupon_dni es el DNI del propio cupón: control_items.dni es el de la transferencia cuando hay cruce.
+        $sql = "SELECT ci.*, c.dni AS cupon_dni FROM control_items ci LEFT JOIN cupones c ON c.id = ci.cupon_id
+                WHERE ci.control_id = ? AND ci.tipo = ? AND (ci.detalle IS NULL OR ci.detalle <> 'Cupón duplicado')";
         $params = [$controlId, $tipo];
         if ($estado) {
-            $sql .= ' AND estado = ?';
+            $sql .= ' AND ci.estado = ?';
             $params[] = $estado;
         }
-        $sql .= " ORDER BY FIELD(estado, 'no', 'revisar', 'espera', 'ok', 'omitido', 'sin_cupon'), COALESCE(fecha_cupon, fecha_banco) DESC, monto DESC";
+        $sql .= " ORDER BY FIELD(ci.estado, 'no', 'revisar', 'espera', 'ok', 'omitido', 'sin_cupon'), COALESCE(ci.fecha_cupon, ci.fecha_banco) DESC, ci.monto DESC";
         $st = db()->prepare($sql);
         $st->execute($params);
         return $st->fetchAll();
