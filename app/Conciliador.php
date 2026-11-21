@@ -30,12 +30,14 @@ final class Conciliador
      *                           nombre): si otro cupón reclama esa transferencia con más evidencia, gana el otro.
      * @param array $descartados [cuponId => [movId => true]]: pares que una persona marcó como "no es el mismo pago".
      *                           Nunca se cruzan, en ningún paso.
+     * @param array $sinVinculo [movId => true]: transferencias que una persona sacó del vínculo del tercero ("esta
+     *                         la pagó él por su cuenta"): para el cruce valen solo con el DNI de quien transfirió.
      * @return array [
      *   'cupones' => [cuponId => ['estado', 'detalle', 'movimiento_id']],
      *   'movs'    => [movId => cuponId],
      * ]
      */
-    public function conciliar(array $cupones, array $movs, array $nombresSas = [], array $terceros = [], array $confirmados = [], array $descartados = []): array
+    public function conciliar(array $cupones, array $movs, array $nombresSas = [], array $terceros = [], array $confirmados = [], array $descartados = [], array $sinVinculo = []): array
     {
         $resultado = [];
         $asignado = [];   // movId => cuponId
@@ -131,17 +133,19 @@ final class Conciliador
 
         // 2) Mismo DNI/CUIL y mismo monto. Un pago hecho por un tercero cargado a mano
         //    cuenta como del cliente: el CUIL del banco no coincide, pero el vínculo sí.
-        $mismaPersona = function (int $movDni, int $cupDni) use ($terceros): bool {
+        $mismaPersona = function (int $mid, int $cupDni) use ($terceros, $movs, $sinVinculo): bool {
+            $movDni = (int)$movs[$mid]['dni'];
             return $movDni === $cupDni
-                || in_array($cupDni, $terceros[$movDni] ?? [], true)   // cupón del cliente, transferencia del tercero
-                || in_array($movDni, $terceros[$cupDni] ?? [], true);  // cupón cargado con el CUIL del tercero
+                || (!isset($sinVinculo[$mid])
+                    && (in_array($cupDni, $terceros[$movDni] ?? [], true)   // cupón del cliente, transferencia del tercero
+                        || in_array($movDni, $terceros[$cupDni] ?? [], true)));  // cupón cargado con el CUIL del tercero
         };
         foreach ($pendientes() as $cid => $c) {
             if (empty($c['dni'])) {
                 continue;
             }
             $lista = array_values(array_filter($candidatos($cid, $c, $this->tolCuil),
-                fn($mid) => $mismaPersona((int)$movs[$mid]['dni'], (int)$c['dni'])));
+                fn($mid) => $mismaPersona((int)$mid, (int)$c['dni'])));
             if ($lista) {
                 $mid = $masCercano($c, $lista);
                 $detalle = (int)$movs[$mid]['dni'] === (int)$c['dni']

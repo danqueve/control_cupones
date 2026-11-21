@@ -182,6 +182,7 @@ encabezado('Control #' . $id, 'control');
                   <?php if ($dni): ?>
                     <div><a href="buscar.php?q=<?= $dni ?>">Ver persona →</a></div>
                     <div><a href="vincular_tercero.php?mov=<?= (int)$it['movimiento_id'] ?>&amp;control=<?= $id ?>&amp;f=<?= h($f) ?>">Asignar a un cliente →</a></div>
+                    <?php if ($it['es_tercero']): ?><div><a href="revisar_tercero.php?dni=<?= $dni ?>">Revisar vínculo →</a></div><?php endif; ?>
                   <?php endif; ?>
                 </td>
               </tr>
@@ -226,6 +227,7 @@ encabezado('Control #' . $id, 'control');
                   <?php if (isset($descartes[$it['cupon_id']]) && !$provisorio): ?><div><a href="<?= $irConfirmar($it) ?>">Cruces descartados →</a></div><?php endif; ?>
                   <?php if (isset($pendAbiertos[$it['cupon_id']])): ?><a href="pendientes.php">En seguimiento →</a>
                   <?php elseif ($provisorio ? $dniCupon : $dni): ?><div><a href="buscar.php?q=<?= $provisorio ? $dniCupon : $dni ?>">Ver persona →</a></div><?php endif; ?>
+                  <?php if ($it['es_tercero'] && $dni): ?><div><a href="revisar_tercero.php?dni=<?= $dni ?>">Revisar vínculo →</a></div><?php endif; ?>
                 </td>
               </tr>
             <?php endif; ?>

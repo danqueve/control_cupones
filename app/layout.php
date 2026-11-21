@@ -232,6 +232,16 @@ function etiqueta(string $estado, ?string $texto = null): string
     return '<span class="etiqueta e-' . h($i['clase']) . '">' . icono($i['icono'], '') . h($texto ?? $i['texto']) . '</span>';
 }
 
+/** Estado de la revisión de un vínculo de pagador tercero (VerificacionTerceros) o de una de sus señales. */
+function etiqueta_vinculo(string $estado): string
+{
+    return [
+        'revisar' => etiqueta('revisar', 'Revisar'),
+        'ok' => etiqueta('ok', 'Coincide'),
+        'mal' => etiqueta('no', 'No coincide'),
+    ][$estado] ?? etiqueta('omitido', 'Sin datos');
+}
+
 function cliente_sas(?int $dni, array $nombresSas): string
 {
     if (!$dni || empty($nombresSas[$dni])) {

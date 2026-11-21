@@ -140,7 +140,13 @@ final class Controles
         foreach ($pdo->query('SELECT cupon_id, movimiento_id FROM cruces_descartados') as $d) {
             $descartados[(int)$d['cupon_id']][(int)$d['movimiento_id']] = true;
         }
-        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisBanco), Terceros::mapaDnis(), $confirmados, $descartados);
+        // Transferencias que una persona sacó del vínculo de su pagador: no se cruzan como "del cliente"
+        $sinVinculo = [];
+        foreach ($pdo->query('SELECT a.movimiento_id FROM movimientos_cliente a
+                              JOIN movimientos m ON m.id = a.movimiento_id WHERE a.dni_cliente_sas = m.dni') as $a) {
+            $sinVinculo[(int)$a['movimiento_id']] = true;
+        }
+        $res = $conc->conciliar($cupones, $movs, Sas::nombres($dnisBanco), Terceros::mapaDnis(), $confirmados, $descartados, $sinVinculo);
 
         // Lo que una persona confirmó a mano se mantiene como acreditado
         self::aplicarConfirmaciones($res, $confirmaciones);
@@ -215,13 +221,15 @@ final class Controles
         }
 
         // Nivel 2: una persona asignó esta transferencia puntual a un cliente.
-        // Manda sobre el vínculo del tercero, pero nunca sobre un cupón ya cruzado
-        // (asignarMovimiento() ya rechaza esos casos al cargar la asignación).
+        // Manda sobre el vínculo del tercero, pero no sobre un cupón ya cruzado
+        // (asignarMovimiento() rechaza esos casos al cargar la asignación). Única excepción: la asignación
+        // "a nombre de quien transfirió" (Terceros::sacarDelVinculo), que vale también con cupón porque
+        // justamente dice que esa transferencia no es del cliente del vínculo.
         $pdo->exec("UPDATE movimientos m
                     JOIN movimientos_cliente a ON a.movimiento_id = m.id
                        SET m.dni_efectivo = a.dni_cliente_sas,
                            m.es_tercero = IF(a.dni_cliente_sas = m.dni, 0, 1)
-                     WHERE m.cupon_id IS NULL");
+                     WHERE m.cupon_id IS NULL OR a.dni_cliente_sas = m.dni");
     }
 
     /**

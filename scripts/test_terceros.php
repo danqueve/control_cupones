@@ -158,5 +158,22 @@ if (!$ok) {
 printf("[%s] cliente→mov %d (esperado 10), ajeno→mov %d (esperado 20)" . PHP_EOL,
     $ok ? 'OK' : 'FALLO', $cruceCliente, $cruceAjeno);
 
+// Una transferencia sacada del vínculo (a nombre de quien la hizo) no se cruza como "del cliente" por el
+// vínculo; sí sigue cruzando por su propio DNI y las demás transferencias del pagador no se ven afectadas.
+echo PHP_EOL . "=== Transferencia sacada del vínculo ===" . PHP_EOL . PHP_EOL;
+$casosSinVinculo = [
+    ['excluida: el cupón del cliente ya no cruza con ella por el vínculo', [1 => cupon()], [10 => mov()], [10 => true], 'revisar'],
+    ['no excluida: sigue cruzando por el vínculo', [1 => cupon()], [10 => mov()], [], 'ok'],
+    ['excluida, pero es del pagador mismo (cupón con su DNI): cruza por su CUIL', [1 => cupon(['dni' => TERCERO])], [10 => mov()], [10 => true], 'ok'],
+];
+foreach ($casosSinVinculo as [$desc, $cupones, $movs, $sinVinculo, $estadoEsperado]) {
+    $r = $conc->conciliar($cupones, $movs, [], [TERCERO => [CLIENTE]], [], [], $sinVinculo)['cupones'][1];
+    $ok = $r['estado'] === $estadoEsperado;
+    if (!$ok) {
+        $fallos++;
+    }
+    printf("[%s] %s (estado=%s, esperado=%s)" . PHP_EOL, $ok ? 'OK' : 'FALLO', $desc, $r['estado'], $estadoEsperado);
+}
+
 echo PHP_EOL . ($fallos === 0 ? "=== Todos los casos OK ===" : "=== {$fallos} caso(s) FALLARON — revisar arriba ===") . PHP_EOL;
 exit($fallos === 0 ? 0 : 1);

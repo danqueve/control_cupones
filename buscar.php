@@ -110,7 +110,8 @@ encabezado('Buscar', 'buscar');
             <span class="mono">DNI <?= formato_dni($elegida['dni']) ?></span>
             <?php if ($elegida['cuit']): ?><span class="mono">CUIL <?= h(formato_cuit($elegida['cuit'])) ?></span><?php endif; ?>
             <?php if ($elegida['nombres']): ?><span>En el banco y los cupones figura como <strong><?= h(implode(', ', $elegida['nombres'])) ?></strong></span><?php endif; ?>
-            <?php if ($elegida['pagadores']): ?><span class="tercero">Pagan en su cuenta: <strong><?= h(implode(', ', $elegida['pagadores'])) ?></strong></span><?php endif; ?>
+            <?php if ($elegida['pagadores']): ?><span class="tercero">Pagan en su cuenta: <strong><?= h(implode(', ', $elegida['pagadores'])) ?></strong>
+              · <a href="revisar_tercero.php?cliente=<?= (int)$elegida['dni'] ?>">Revisar vínculo →</a></span><?php endif; ?>
           </div>
         <?php else: ?>
           <h1>Resultados para “<?= h($q) ?>”</h1>
@@ -126,6 +127,9 @@ encabezado('Buscar', 'buscar');
           // un tercero vinculado hizo por ella, y con esas no hay nada que vincular desde su DNI.
           $propias = $elegida ? count(array_filter($res['movs'], fn($m) => (int)$m['dni'] === (int)$elegida['dni'])) : 0;
         ?>
+        <?php if ($propias > 0 && Terceros::porTercero((int)$elegida['dni'])): ?>
+          <a class="boton boton-sec" style="min-height: 42px; font-size: 14px" href="revisar_tercero.php?dni=<?= (int)$elegida['dni'] ?>">Revisar vínculo →</a>
+        <?php endif; ?>
         <?php if ($propias > 0): ?>
           <a class="boton boton-sec" style="min-height: 42px; font-size: 14px"
              href="vincular_tercero.php?dni=<?= (int)$elegida['dni'] ?>&amp;volver=<?= urlencode('buscar.php?' . http_build_query(['q' => $q])) ?>">

@@ -18,6 +18,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $r = Terceros::quitarAsignacionMovimiento((int)($_POST['movimiento_id'] ?? 0));
         flash((isset($r['error']) ? $r['error'] : 'Se quitó la asignación.') . (!empty($r['aviso']) ? ' ' . $r['aviso'] : ''),
             isset($r['error']) ? 'error' : (!empty($r['aviso']) ? 'info' : 'ok'));
+    } elseif ($accion === 'volver_a_incluir') {
+        $r = Terceros::volverAIncluir((int)($_POST['movimiento_id'] ?? 0));
+        flash((isset($r['error']) ? $r['error'] : 'Listo: esa transferencia vuelve a seguir el vínculo.') . (!empty($r['aviso']) ? ' ' . $r['aviso'] : ''),
+            isset($r['error']) ? 'error' : (!empty($r['aviso']) ? 'info' : 'ok'));
     } elseif ($accion === 'crear') {
         $r = Terceros::crear(
             (int)($_POST['dni_tercero'] ?? 0),
@@ -49,6 +53,8 @@ $vinculos = Terceros::listar($soloActivos ? true : false);
 
 $sasClientes = Sas::nombres(array_column($vinculos, 'dni_cliente_sas'));
 $sasPagadores = Sas::activo() ? Sas::nombres(array_column($vinculos, 'dni_tercero')) : [];
+// Qué dice la evidencia de cada vínculo vigente (cobrador, zona, importes...): un chip para ver cuáles revisar
+$estadosVinculo = $soloActivos ? VerificacionTerceros::estados($vinculos) : [];
 
 $grupos = [];
 foreach ($vinculos as $v) {
@@ -120,6 +126,7 @@ encabezado('Pagadores terceros', 'terceros');
             <span class="chico">DNI <span class="mono"><?= formato_dni($dniTerc) ?></span><?= $v['cuit_tercero'] ? ' · CUIL <span class="mono">' . h(formato_cuit($v['cuit_tercero'])) . '</span>' : '' ?></span>
           </div>
           <div class="pend-cuando">
+            <?php if ($soloActivos): ?><?= etiqueta_vinculo($estadosVinculo[(int)$v['id']] ?? 'sin_datos') ?><?php endif; ?>
             <?php if ($v['es_principal']): ?><span class="chico" style="font-weight: 700">★ Principal</span><?php endif; ?>
             <?php if (!$soloActivos): ?><span class="chico">de baja: <?= h($v['desactivado_por']) ?>, <?= h(fecha_ar($v['desactivado_en'])) ?></span><?php endif; ?>
           </div>
@@ -130,8 +137,13 @@ encabezado('Pagadores terceros', 'terceros');
         <?php if ($soloActivos && !empty($sasPagadores[$dniTerc])): ?>
           <p class="nota-espera"><?= icono('alerta') ?><span><strong>Ojo:</strong> este DNI también es cliente de SAS Imperio (<?= h($sasPagadores[$dniTerc]) ?>).</span></p>
         <?php endif; ?>
-        <?php if ($soloActivos): ?>
+        <?php if (!$soloActivos): ?>
           <div class="form-botones" style="justify-content: flex-start">
+            <a class="boton boton-sec boton-chico" href="revisar_tercero.php?id=<?= (int)$v['id'] ?>">Ver detalle →</a>
+          </div>
+        <?php else: ?>
+          <div class="form-botones" style="justify-content: flex-start">
+            <a class="boton boton-sec boton-chico" href="revisar_tercero.php?id=<?= (int)$v['id'] ?>">Revisar vínculo →</a>
             <?php if (!$v['es_principal']): ?>
               <form method="post" style="margin: 0">
                 <?= csrf_campo() ?><input type="hidden" name="accion" value="marcar_principal">
@@ -161,22 +173,28 @@ encabezado('Pagadores terceros', 'terceros');
         </div>
       </div>
     </div>
-    <?php foreach ($asignaciones as $a): $dniCli = (int)$a['dni_cliente_sas']; ?>
+    <?php foreach ($asignaciones as $a): $dniCli = (int)$a['dni_cliente_sas']; $excluida = Terceros::esExclusion($a); ?>
       <div class="pend">
         <div class="pend-fila">
           <div class="pend-quien">
             <a class="titular" href="buscar.php?q=<?= (int)$a['dni'] ?>"><?= h($a['nombre_banco'] ?: 'Nombre no informado') ?></a>
-            <span class="chico">→ <?= h($sasAsignados[$dniCli] ?? ('DNI ' . formato_dni($dniCli))) ?> · <span class="mono"><?= h(fecha_ar($a['fecha'])) ?></span></span>
+            <span class="chico"><?= $excluida ? '→ queda a nombre de quien la hizo (sacada del vínculo)'
+                : '→ ' . h($sasAsignados[$dniCli] ?? ('DNI ' . formato_dni($dniCli))) ?> · <span class="mono"><?= h(fecha_ar($a['fecha'])) ?></span></span>
           </div>
           <span class="pend-monto"><?= dinero($a['monto']) ?></span>
         </div>
         <?php if ($a['nota']): ?><div class="sub"><?= h($a['nota']) ?></div><?php endif; ?>
         <div class="sub">Asignado por <?= h($a['asignado_por']) ?>, <?= h(fecha_ar($a['asignado_en'])) ?></div>
         <div class="form-botones" style="justify-content: flex-start">
+          <?php if ($excluida): ?>
+            <a class="boton boton-sec boton-chico" href="revisar_tercero.php?dni=<?= (int)$a['dni'] ?>">Revisar vínculo →</a>
+          <?php else: ?>
+            <a class="boton boton-sec boton-chico" href="vincular_tercero.php?mov=<?= (int)$a['movimiento_id'] ?>&amp;volver=terceros.php">Cambiar cliente →</a>
+          <?php endif; ?>
           <form method="post" style="margin: 0">
-            <?= csrf_campo() ?><input type="hidden" name="accion" value="quitar_asignacion">
+            <?= csrf_campo() ?><input type="hidden" name="accion" value="<?= $excluida ? 'volver_a_incluir' : 'quitar_asignacion' ?>">
             <input type="hidden" name="movimiento_id" value="<?= (int)$a['movimiento_id'] ?>">
-            <button type="submit" class="boton boton-sec boton-chico">Quitar asignación</button>
+            <button type="submit" class="boton boton-sec boton-chico"><?= $excluida ? 'Volver a incluir en el vínculo' : 'Quitar asignación' ?></button>
           </form>
         </div>
       </div>

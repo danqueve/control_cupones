@@ -293,6 +293,146 @@ final class Terceros
         return ['aviso' => self::recruzar()];
     }
 
+    // ─── Corrección de un vínculo mal cargado ─────────────────────────
+
+    /**
+     * Pasa el vínculo a otro cliente de SAS en un solo paso: todos los pagos del pagador (también los ya
+     * cargados) se atribuyen al cliente correcto. El vínculo viejo no se borra: queda en el historial
+     * ("Dados de baja") con la nota de quién lo corrigió y a quién pasó.
+     * @return array ['id' => int, 'aviso' => ?string] o ['error' => string]
+     */
+    public static function cambiarCliente(int $id, int $dniClienteNuevo, string $nota, string $usuario): array
+    {
+        if ($dniClienteNuevo <= 0) {
+            return ['error' => 'Falta el DNI del cliente correcto.'];
+        }
+        if (!Sas::activo()) {
+            return ['error' => 'SAS Imperio no está disponible ahora, así que no se puede comprobar el DNI del cliente. Probá más tarde.'];
+        }
+        $nombreNuevo = Sas::nombres([$dniClienteNuevo])[$dniClienteNuevo] ?? null;
+        if ($nombreNuevo === null) {
+            return ['error' => 'No encontré ese DNI entre los clientes de SAS Imperio.'];
+        }
+
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $st = $pdo->prepare('SELECT * FROM pagadores_terceros WHERE id = ? FOR UPDATE');
+            $st->execute([$id]);
+            $viejo = $st->fetch();
+            if (!$viejo) {
+                $pdo->rollBack();
+                return ['error' => 'No encontré ese vínculo.'];
+            }
+            if ($viejo['activo'] === null) {
+                $pdo->rollBack();
+                return ['error' => 'Ese vínculo ya está dado de baja: cargá uno nuevo.'];
+            }
+            $dniTercero = (int)$viejo['dni_tercero'];
+            if ($dniClienteNuevo === (int)$viejo['dni_cliente_sas']) {
+                $pdo->rollBack();
+                return ['error' => 'Ese ya es el cliente del vínculo.'];
+            }
+            if ($dniClienteNuevo === $dniTercero) {
+                $pdo->rollBack();
+                return ['error' => 'Es el mismo DNI de quien pagó: no hace falta vincularlo.'];
+            }
+            $st = $pdo->prepare('SELECT id FROM pagadores_terceros WHERE dni_tercero = ? AND dni_cliente_sas = ? AND activo = 1');
+            $st->execute([$dniTercero, $dniClienteNuevo]);
+            if ($st->fetchColumn()) {
+                $pdo->rollBack();
+                return ['error' => 'Ese pagador ya está vinculado a ese cliente: dá de baja este vínculo y listo.'];
+            }
+
+            $nombreViejo = Sas::nombres([(int)$viejo['dni_cliente_sas']])[(int)$viejo['dni_cliente_sas']] ?? null;
+            $marca = 'Corregido: pasó al cliente ' . ($nombreNuevo ?: (string)$dniClienteNuevo) . ' (DNI ' . $dniClienteNuevo . '), por '
+                . $usuario . ' el ' . date('d/m/Y');
+            $pdo->prepare('UPDATE pagadores_terceros SET activo = NULL, es_principal = 0, nota = ?,
+                               desactivado_por = ?, desactivado_en = NOW() WHERE id = ?')
+                ->execute([mb_substr(trim((string)$viejo['nota']) !== '' ? trim((string)$viejo['nota']) . ' · ' . $marca : $marca, 0, 300),
+                    mb_substr($usuario, 0, 100), $id]);
+
+            $notaNueva = trim($nota) !== '' ? trim($nota)
+                : 'Corrige el vínculo con ' . ($nombreViejo ?: (string)$viejo['dni_cliente_sas']) . ' (DNI ' . (int)$viejo['dni_cliente_sas'] . ')';
+            $pdo->prepare('INSERT INTO pagadores_terceros (dni_tercero, cuit_tercero, nombre_tercero, dni_cliente_sas,
+                               es_principal, nota, activo, creado_por, creado_en)
+                           VALUES (?, ?, ?, ?, ?, ?, 1, ?, NOW())')
+                ->execute([$dniTercero, $viejo['cuit_tercero'], $viejo['nombre_tercero'], $dniClienteNuevo,
+                    (int)$viejo['es_principal'], mb_substr($notaNueva, 0, 300), mb_substr($usuario, 0, 100)]);
+            $nuevoId = (int)$pdo->lastInsertId();
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+
+        return ['id' => $nuevoId, 'aviso' => self::recruzar()];
+    }
+
+    /**
+     * Saca UNA transferencia del vínculo: queda a nombre de quien la hizo, sin tocar el resto de sus pagos.
+     * Se guarda como asignación puntual al propio DNI del pagador (así no hace falta una tabla nueva); a
+     * diferencia de una asignación a otro cliente, vale también si la transferencia ya está cruzada con un cupón.
+     * @return array ['aviso' => ?string] o ['error' => string]
+     */
+    public static function sacarDelVinculo(int $movimientoId, string $nota, string $usuario): array
+    {
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $st = $pdo->prepare('SELECT dni FROM movimientos WHERE id = ? FOR UPDATE');
+            $st->execute([$movimientoId]);
+            $mov = $st->fetch();
+            if (!$mov) {
+                $pdo->rollBack();
+                return ['error' => 'No encontré esa transferencia.'];
+            }
+            if (empty($mov['dni'])) {
+                $pdo->rollBack();
+                return ['error' => 'El banco no informó el CUIL de quien transfirió: no hay vínculo del que sacarla.'];
+            }
+            $pdo->prepare('INSERT INTO movimientos_cliente (movimiento_id, dni_cliente_sas, nota, asignado_por, asignado_en)
+                           VALUES (?, ?, ?, ?, NOW())
+                           ON DUPLICATE KEY UPDATE dni_cliente_sas = VALUES(dni_cliente_sas), nota = VALUES(nota),
+                               asignado_por = VALUES(asignado_por), asignado_en = VALUES(asignado_en)')
+                ->execute([$movimientoId, (int)$mov['dni'],
+                    mb_substr(trim($nota) !== '' ? trim($nota) : 'Sacada del vínculo: queda a nombre de quien la hizo', 0, 300),
+                    mb_substr($usuario, 0, 100)]);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+
+        // Puede cambiar con qué cupón se cruza (ya no vale el vínculo para esta transferencia): se recalcula todo
+        return ['aviso' => self::recruzar()];
+    }
+
+    /**
+     * Deshace sacarDelVinculo() o quita una asignación puntual a otro cliente: la transferencia vuelve a
+     * seguir las reglas del vínculo.
+     * @return array ['aviso' => ?string] o ['error' => string]
+     */
+    public static function volverAIncluir(int $movimientoId): array
+    {
+        $st = db()->prepare('DELETE FROM movimientos_cliente WHERE movimiento_id = ?');
+        $st->execute([$movimientoId]);
+        if (!$st->rowCount()) {
+            return ['error' => 'Esa transferencia no tenía una asignación a mano.'];
+        }
+        return ['aviso' => self::recruzar()];
+    }
+
+    /** ¿Esa asignación puntual es "a nombre de quien transfirió" (sacada del vínculo)? */
+    public static function esExclusion(array $asignacion): bool
+    {
+        return isset($asignacion['dni']) && (int)$asignacion['dni'] === (int)$asignacion['dni_cliente_sas'];
+    }
+
     // ─── Asignación puntual de una transferencia ──────────────────────
 
     /**
