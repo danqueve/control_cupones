@@ -23,6 +23,7 @@ require_once __DIR__ . '/Terceros.php';
 require_once __DIR__ . '/VerificacionTerceros.php';
 require_once __DIR__ . '/Controles.php';
 require_once __DIR__ . '/Busqueda.php';
+require_once __DIR__ . '/Usuarios.php';
 require_once __DIR__ . '/layout.php';
 
 function config(string $clave, $defecto = null)
